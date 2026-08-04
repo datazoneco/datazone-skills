@@ -1,0 +1,200 @@
+app:
+  name: "Sales Dashboard"
+  description: "Revenue, orders, and regional breakdown"
+  icon: "TrendingUp"
+
+  config:
+    cache: true
+    cache_ttl: 1800
+    default_tab: overview
+    style:
+      theme: blue
+
+  layout:
+    tabs:
+      - name: overview
+        title: "Overview"
+        filters: [region_filter, date_from_filter]
+        items:
+          - type: chart-group
+            name: kpis
+            span: 12
+            entities:
+              - type: chart
+                name: revenue_total
+                span: 4
+              - type: chart
+                name: order_count
+                span: 4
+              - type: chart
+                name: avg_order_value
+                span: 4
+
+          - type: chart
+            name: revenue_over_time
+            span: 8
+            height: 360
+
+          - type: chart
+            name: revenue_by_region
+            span: 4
+            height: 360
+
+          - type: text
+            name: notes
+            span: 12
+
+      - name: detail
+        title: "Orders"
+        filters: [region_filter]
+        items:
+          - type: chart
+            name: order_table
+            span: 12
+            height: 500
+
+  components:
+    variables:
+      - name: region
+        type: string
+      - name: date_from
+        type: date
+
+    filters:
+      - type: dropdown
+        name: region_filter
+        title: "Region"
+        affected_variable: region
+        placeholder: "All regions"
+        options:
+          type: sql
+          query: "SELECT DISTINCT region AS value, region AS label FROM orders ORDER BY 1"
+
+      - type: date
+        name: date_from_filter
+        title: "From"
+        affected_variable: date_from
+        default_value: "2026-01-01"
+
+    texts:
+      - name: notes
+        title: "About this dashboard"
+        content: |
+          Figures update every 30 minutes. Revenue excludes cancelled orders.
+
+    charts:
+      - type: number
+        name: revenue_total
+        title: "Total Revenue"
+        query: |
+          SELECT sum(amount) AS revenue
+          FROM orders
+          WHERE status != 'cancelled'
+            {% if region %}AND region = '{{ region }}'{% endif %}
+            {% if date_from %}AND order_date >= '{{ date_from }}'{% endif %}
+        metrics:
+          - name: revenue
+            label: "Revenue"
+            format: "$0,0"
+            icon: "DollarSign"
+            icon_variant: success
+
+      - type: number
+        name: order_count
+        title: "Orders"
+        query: |
+          SELECT count() AS orders
+          FROM orders
+          WHERE status != 'cancelled'
+            {% if region %}AND region = '{{ region }}'{% endif %}
+            {% if date_from %}AND order_date >= '{{ date_from }}'{% endif %}
+        metrics:
+          - name: orders
+            label: "Orders"
+            format: "0,0"
+            icon: "ShoppingCart"
+
+      - type: number
+        name: avg_order_value
+        title: "Average Order Value"
+        query: |
+          SELECT avg(amount) AS aov
+          FROM orders
+          WHERE status != 'cancelled'
+            {% if region %}AND region = '{{ region }}'{% endif %}
+            {% if date_from %}AND order_date >= '{{ date_from }}'{% endif %}
+        metrics:
+          - name: aov
+            label: "AOV"
+            format: "$0,0.00"
+
+      - type: line
+        name: revenue_over_time
+        title: "Revenue Over Time"
+        query: |
+          SELECT toDate(order_date) AS day, sum(amount) AS revenue
+          FROM orders
+          WHERE status != 'cancelled'
+            {% if region %}AND region = '{{ region }}'{% endif %}
+            {% if date_from %}AND order_date >= '{{ date_from }}'{% endif %}
+          GROUP BY day
+          ORDER BY day
+        axis:
+          - name: left
+            position: left
+            format: "$0,0a"
+        dimensions:
+          - name: day
+            label: "Date"
+        metrics:
+          - name: revenue
+            label: "Revenue"
+            format: "$0,0"
+            axis_name: left
+        chart_config:
+          line_type: monotone
+          fill_area: true
+          show_legend: false
+
+      - type: bar
+        name: revenue_by_region
+        title: "Revenue by Region"
+        query: |
+          SELECT region, sum(amount) AS revenue
+          FROM orders
+          WHERE status != 'cancelled'
+            {% if date_from %}AND order_date >= '{{ date_from }}'{% endif %}
+          GROUP BY region
+          ORDER BY revenue DESC
+        dimensions:
+          - name: region
+            label: "Region"
+            affected_filter: region_filter
+        metrics:
+          - name: revenue
+            label: "Revenue"
+            format: "$0,0"
+
+      - type: data_table
+        name: order_table
+        title: "Recent Orders"
+        query: |
+          SELECT order_id, order_date, region, amount
+          FROM orders
+          WHERE status != 'cancelled'
+            {% if region %}AND region = '{{ region }}'{% endif %}
+          ORDER BY order_date DESC
+          LIMIT 500
+        dimensions:
+          - name: order_id
+            label: "Order"
+          - name: order_date
+            label: "Date"
+          - name: region
+            label: "Region"
+          - name: amount
+            label: "Amount"
+            number_format: "$0,0.00"
+            table_align: right
+        chart_config:
+          page_size: 25
