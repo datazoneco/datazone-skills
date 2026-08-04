@@ -35,8 +35,12 @@ cp -r datazone-skills/skills/datazone-intelligent-app ~/.claude/skills/
 | `datazone-project-setup` | Installing the CLI, creating a profile, cloning a project, the edit-deploy-verify loop |
 | `datazone-pipeline` | Writing `@transform` pipelines — inputs, outputs, materialization, the DAG |
 | `datazone-intelligent-app` | Building and debugging Intelligent App dashboards — charts, filters, tabs, widgets |
+| `datazone-endpoint` | Exposing a query, action, or vector search as a REST API |
+| `datazone-flow` | Declarative YAML orchestration — LLM, REST, action, and Python nodes |
+| `datazone-knowledge-object` | Versioned business entities — fields, primary keys, relationships, actions |
+| `datazone-api` | Calling the Datazone REST API — auth, filters, sorting, pagination, links |
 
-More on the way: endpoints, extracts.
+More on the way: extracts.
 
 ## Requirements
 
