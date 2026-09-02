@@ -1,6 +1,6 @@
 ---
 name: datazone-studio-app
-description: Use when building or debugging a Datazone Studio App — a Vite + React SPA that lives in the project repository and is served by Datazone behind the user's session. Triggers on "studio app", editing files under `studio/<alias>/`, an app registered under `studio_apps:` in config.yml, calling the Datazone API from a React app, `@/lib/datazone`, or a built app that shows a blank page or 404s on its assets.
+description: Use when building or debugging a Datazone Studio App — a Vite + React SPA that lives in the project repository and is served by Datazone behind the user's session. Triggers on "studio app", editing files under `studio/<alias>/`, an app registered under `studio_apps:` in config.yml, calling the Datazone API from a React app, `@/lib/datazone`, adding shadcn components or styling a studio app to match Datazone, or a built app that shows a blank page or 404s on its assets.
 ---
 
 # Building Datazone Studio Apps
@@ -191,47 +191,46 @@ Keep one thin module per object (`src/lib/orders.ts`) holding its id lookup and 
 so `branch` and the paths are written once. Worked example, with the read/write pattern:
 `references/api-reference.md`.
 
-## UI components
+## UI components and styling
 
-The scaffold ships `app-layout.tsx` and nothing else — `src/components/ui/` starts empty
-so the first build cannot fail on a missing component.
+**Datazone studio apps use [shadcn/ui](https://ui.shadcn.com) (`new-york` style) on
+Tailwind 4**, with the single `radix-ui` package for primitives, `lucide-react` for icons,
+and `cn()` from `@/lib/utils` for class merging. Fonts are Inter and Roboto Mono,
+self-hosted. The base colour is `slate`, in oklch.
 
-Twenty components are available: alert, avatar, badge, button, card, checkbox, dialog,
-dropdown-menu, input, label, popover, progress, select, separator, skeleton, switch,
-table, tabs, textarea, tooltip.
+Components are not a dependency: their source is copied into `src/components/ui/` and
+belongs to the app from then on. Add them from the official registry — `components.json`
+in the app is already configured for it:
 
 ```bash
 cd studio/<alias>
-npx shadcn@latest add button card table     # reads components.json; writes src/components/ui/
+npx shadcn@latest add button card table     # writes src/components/ui/
 ```
 
-They are plain shadcn (new-york, Tailwind 4 variants), so they land at
-`src/components/ui/<name>.tsx` and are yours to edit. Compose from them rather than
-hand-writing markup — they carry the theme, focus states and keyboard behaviour. Plain
-Tailwind is right for layout.
+The scaffold ships `app-layout.tsx` and leaves `src/components/ui/` empty, so the first
+build cannot fail on a component nobody generated. Datazone builds against these twenty:
+alert, avatar, badge, button, card, checkbox, dialog, dropdown-menu, input, label, popover,
+progress, select, separator, skeleton, switch, table, tabs, textarea, tooltip. Others in the
+registry work, but these are what the theme is verified against.
 
-Then **check `package.json`**: the CLI adds dependencies, and Radix primitives must come
-from the single `radix-ui` package (`radix-ui": "1.6.7"`), not one package per primitive.
-Pin exact versions — a `^` range lets two builds of the same commit install different code.
+Compose from components rather than hand-writing markup — they carry the theme, focus
+states and keyboard behaviour. Plain Tailwind is right for layout.
 
-**Tooltip needs one `<TooltipProvider>`** above it: put it in `app-layout.tsx` around
-`{children}`, not around each tooltip.
+Then **check `package.json`**: the CLI writes `^` ranges, so pin them exactly, and Radix
+must appear once as `radix-ui` (`"radix-ui": "1.6.7"`) rather than one package per
+primitive. **Tooltip needs one `<TooltipProvider>`**, in `app-layout.tsx` around
+`{children}`. If a component file already exists, read it before touching it — it may have
+been customised.
 
-If a component file already exists, read it before touching it — it may have been
-customised. Do not overwrite it wholesale to "reinstall" it.
-
-## Styling
-
-**Tailwind 4, configured in CSS.** There is no `tailwind.config.js` and no
+**Tailwind 4 is configured in CSS.** There is no `tailwind.config.js` and no
 `postcss.config.js`; adding one does nothing, because v4 ignores a config file unless
-`@config` names it. The theme lives in `src/index.css`, and Tailwind scans the source for
+`@config` names it. The theme lives in `src/index.css` and Tailwind scans the source for
 classes, so there is no `content` list either.
 
 Style from token names — `bg-background`, `text-muted-foreground`, `border-border`,
-`bg-card`, `text-primary` — not literal colours, or the app will not match Datazone and
+`bg-card`, `text-primary` — never literal colours, or the app will not match Datazone and
 will break in dark mode. Beyond the shadcn set: `warning`, `success`, `info`, `error`,
-`chart-1` … `chart-5`, `font-sans`, `font-mono`. To restyle globally, edit `:root` and
-`.dark` in `src/index.css`.
+`chart-1` … `chart-5`, `font-sans`, `font-mono`.
 
 **Adding a colour takes two entries** — the value, and the `@theme inline` line that turns
 it into a utility class:
@@ -243,6 +242,11 @@ it into a utility class:
 
 Without the second, `var(--brand)` works but `bg-brand` does not exist — and a missing
 utility class is silent, so the element just renders unstyled.
+
+**`references/styling.md` has the full theme** — every token as the scaffold generates it,
+which token to use for what, the layout shell, and worked list / card-grid / dialog-form
+pages. Read it when writing UI, when an app looks wrong next to Datazone, or when
+`src/index.css` has drifted and you need the original back.
 
 ## Local development
 
@@ -291,5 +295,6 @@ Then push, build, and read the Builds tab.
 ## Reference
 
 - `references/api-reference.md` — the SDK surface and a worked knowledge-object module
+- `references/styling.md` — the shadcn setup, the complete theme, and layout samples
 
 Official docs: https://docs.datazone.co/reference/studio-apps/overview
