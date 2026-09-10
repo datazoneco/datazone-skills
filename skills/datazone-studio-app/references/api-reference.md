@@ -16,7 +16,20 @@ anonymous.
 apiFetch<T>(path: string, init?: RequestInit): Promise<T>
 
 getMe(): Promise<DatazoneUser>                     // GET /user/me
+
+// POST /dataset/query returns { result, data_schema, row_count, duration_ms }.
+// executeQuery unwraps it to the rows (null becomes []); the other returns the envelope.
 executeQuery<T>(sql: string, tableVersions?: Record<string, number>): Promise<T[]>
+executeQueryWithMetadata<T>(sql: string, tableVersions?: Record<string, number>): Promise<QueryExecution<T>>
+
+interface QueryExecution<T> {
+  result: T[] | null
+  data_schema: { name: string; type: string }[] | null
+  duration_ms: number | null
+  row_count: number | null
+  error?: string | null   // always unset here — a failed query throws DatazoneApiError
+}
+
 callEndpoint<T>(slug: string, params?: Record<string, string | number | boolean | Array<string | number> | undefined>): Promise<EndpointResponse<T>>
 
 branch: string        // VITE_DATAZONE_BRANCH, inlined at build time
@@ -196,9 +209,16 @@ Remember the route: this page does nothing until `App.tsx` has
 
 ```ts
 // Read-only analytics. Runs with the signed-in user's dataset permissions.
+// Resolves to the rows themselves — the endpoint's envelope is already unwrapped.
 const rows = await executeQuery<{ region: string; total: number }>(
   "select region, sum(amount) as total from sales group by region",
 )
+
+// When the app needs the column types, the row count or how long it took:
+const execution = await executeQueryWithMetadata<{ region: string; total: number }>(
+  "select region, sum(amount) as total from sales group by region",
+)
+const columns = execution.data_schema ?? []   // [{ name: "region", type: "String" }, …]
 
 // A published endpoint — the query lives server-side, so the app ships no SQL.
 const { records } = await callEndpoint<{ day: string; revenue: number }>("daily-revenue", {

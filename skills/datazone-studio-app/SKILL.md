@@ -101,7 +101,8 @@ need something it does not cover; `apiFetch` is the escape hatch.
 |---|---|
 | `apiFetch<T>(path, init?)` | Any API path, relative to the API root — do **not** include `/api` |
 | `getMe()` | The signed-in user |
-| `executeQuery<T>(sql, tableVersions?)` | SQL over the datasets this user can read; returns row objects |
+| `executeQuery<T>(sql, tableVersions?)` | SQL over the datasets this user can read; resolves to an array of rows |
+| `executeQueryWithMetadata<T>(sql, …)` | The same query as an envelope: `{result, data_schema, row_count, duration_ms}` |
 | `callEndpoint<T>(slug, params?)` | A published endpoint; returns `{records}` |
 | `branch` | The branch this bundle was built from |
 | `projectId` | The project the app lives in |
@@ -118,6 +119,11 @@ const rows = await executeQuery<{ region: string; total: number }>(
 )
 const { records } = await callEndpoint("daily-revenue", { page_size: 50 })
 ```
+
+`POST /dataset/query` returns an envelope — `{result, data_schema, row_count, duration_ms}` —
+and `executeQuery` unwraps it, so use what it returns as an array and do not read `.result`
+off it. Use `executeQueryWithMetadata` when the app needs the column schema, the row count or
+the duration.
 
 Permissions are enforced per user on every call, so a read the user is not allowed to make
 throws `DatazoneApiError` — show its message rather than swallowing it. Never build SQL by
@@ -268,6 +274,10 @@ same-origin, so you will need to be signed in there).
   is the only way back.
 - **Cross-organisation access is refused**, not merely hidden: an app is served only to
   users in its own organisation.
+- **The SDK is vendored per app**, so an app scaffolded a while ago carries an older copy. If
+  `executeQuery` in `src/lib/datazone.ts` reads `return apiFetch<T[]>("/dataset/query", …)` it
+  predates the response envelope and returns the whole object while typed as rows — it compiles
+  and fails on the first `.map`. Replace that one function with the current version.
 - **Do not commit secrets.** The bundle is public to anyone who can open the app.
 
 ## Verifying your work
