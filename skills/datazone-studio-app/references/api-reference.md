@@ -41,9 +41,10 @@ class DatazoneApiError extends Error    // any other non-2xx; has .status and th
 ```
 
 `apiFetch` sets `Content-Type: application/json` when there is a body, returns `undefined`
-for `204`, and turns the API's `detail` into the error message. Array values passed to
-`callEndpoint` are repeated as query parameters, which is how the API reads multi-valued
-filters.
+for `204`, and turns the API's `detail` into the error message. `callEndpoint` repeats
+array values as query parameters, but **the endpoint route keeps only the last one**. Send
+a list as one comma-separated string, and split it in the endpoint's SQL
+(`splitByChar`; see `datazone-endpoint`).
 
 Handle the two error types differently: `DatazoneAuthError` means reload to sign in again;
 `DatazoneApiError` carries a message the user can usually act on (a permission, a
@@ -221,19 +222,85 @@ const execution = await executeQueryWithMetadata<{ region: string; total: number
 const columns = execution.data_schema ?? []   // [{ name: "region", type: "String" }, …]
 
 // A published endpoint — the query lives server-side, so the app ships no SQL.
-const { records } = await callEndpoint<{ day: string; revenue: number }>("daily-revenue", {
-  page_size: 50,
-  region: ["EU", "UK"],
+// endpointSlug is in src/lib/resources.ts (below). Paging and lists are the endpoint's own
+// filters: page_size is ignored, and a repeated parameter keeps only its last value.
+const { records } = await callEndpoint<{ day: string; revenue: number }>(await endpointSlug("Daily Revenue"), {
+  regions: ["EU", "UK"].join(","),
+  limit_rows: 50,
+  offset_rows: 0,
 })
 ```
 
 Prefer an endpoint over `executeQuery` for any query the app depends on: the SQL stays
-server-side and user input arrives as typed filters. See `datazone-endpoint`.
+server-side. The filters are **not** bound parameters: the query is a Jinja2 template and
+values are pasted in as-is, so quote and escape strings in the template itself. See
+`datazone-endpoint`.
+
+```yaml
+# endpoints/sales-by-category.yml
+endpoint:
+  name: Sales By Category
+  type: query
+  config:
+    query: |
+      SELECT category, sum(amount) AS revenue
+      FROM sales
+      WHERE country = '{{ country | replace("\\", "\\\\") | replace("'", "\\'") }}'
+      {% if min_quantity %}AND quantity >= {{ min_quantity | int }}{% endif %}
+      GROUP BY category
+    filters:
+      - name: country
+        type: string
+        optional: false
+      - name: min_quantity
+        type: integer
+```
 
 `GET /endpoint/{slug}` is the only call — there is no POST variant — and the response is
-always `{records}`, whether the endpoint is a query, an action or a vector search. The
-slug lookup is not branch-aware. `page`, `page_size` and `sort_by` are reserved; every
-other parameter is a filter or an action parameter.
+always `{records}`, whether the endpoint is a query, an action or a vector search. `page`,
+`page_size` and `sort_by` are accepted but **ignored**, so page and sort in the SQL with
+filters of your own (`limit_rows`, `offset_rows`). Every other parameter must be a declared
+filter (400 otherwise) or, for an action, an action parameter. Rows are capped at the
+deployment's query row limit (500 on dev).
+
+**Query endpoint results are cached for an hour** per user and rendered query. An endpoint
+that reads a view returns the old rows after a refresh, until the cache expires. Either
+read freshly prepared data with `executeQuery`, which is not cached, or give the endpoint a
+`synced_at` filter that it renders into a SQL comment, and pass the view's `last_sync_at`.
+`datazone-endpoint` shows the template.
+
+### Resolving slugs
+
+A slug is random **and belongs to one branch**: the same endpoint on `main` and on
+`feat` has two slugs. Resolve it by name on the app's branch, once per session. Do not
+paste in the slug you saw in the UI.
+
+```ts
+// src/lib/resources.ts
+import { apiFetch, branch, branchQuery, projectId } from "@/lib/datazone"
+
+type EndpointItem = { name: string; definition: { slug: string } }
+
+const slugs = new Map<string, Promise<string>>()
+
+/** The slug of the endpoint with this name, on the branch this bundle was built from. */
+export function endpointSlug(name: string): Promise<string> {
+  let slug = slugs.get(name)
+  if (!slug) {
+    slug = apiFetch<{ items: EndpointItem[] }>(
+      `/endpoint/list?${branchQuery({ name, "project.$id": projectId })}`,
+    ).then((response) => {
+      const endpoint = response.items[0]
+      if (!endpoint) throw new Error(`Endpoint "${name}" is not deployed on ${branch}`)
+      return endpoint.definition.slug
+    })
+    slugs.set(name, slug)
+  }
+  return slug
+}
+```
+
+The top-level `slug` on a list item is empty; the served one is `definition.slug`.
 
 ## Logic in an action, called through an endpoint
 
@@ -248,19 +315,23 @@ def budget_summary(year: str, department: str) -> list[dict]:
 
 ```yaml
 # endpoints/budget-summary.yml
-endpoints:
-  - name: Budget Summary
-    type: action
-    config:
-      action_id: <the action's id>
+endpoint:
+  name: Budget Summary
+  type: action
+  config:
+    action_id: <the action's id>
 ```
 
 ```ts
-const { records } = await callEndpoint<BudgetRow>(SLUGS.budgetSummary, { year: 2026, department })
+const slug = await endpointSlug("Budget Summary")
+const { records } = await callEndpoint<BudgetRow>(slug, { year: 2026, department })
 ```
 
-The action must return a list — a dict or a scalar fails the call. Missing required
-parameters return 400. The call is synchronous with a 300s cap; longer work is a flow.
+Every parameter reaches the action as a string, whatever its type hint, so `int()` and
+`float()` it, and compare booleans explicitly (`flag == "true"`), because `"false"` is
+truthy. The action must return a list; a dict or a scalar fails the call. `page` and
+`page_size` are ignored, so the whole list comes back. Missing required parameters return
+400. The call is synchronous with a 300s cap; longer work is a flow.
 
 ## Long work in a flow
 

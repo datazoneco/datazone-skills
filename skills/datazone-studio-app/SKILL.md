@@ -42,10 +42,13 @@ Registration is what makes the app appear in Datazone. It does **not** build it.
 3. Build — the Build button, or `POST /studio-app/{id}/build?branch=<branch>`
 4. Check the Builds tab; the app is served only after the build reaches `READY`
 
-There is no local type-check or build in this loop: `npm install && vite build` runs in
-the sandbox. `npm run dev` works for layout, but the API calls will not — the dev server
-does not serve `/api` (see "Local development"). Re-read your changes before pushing;
-the checklist at the end of this file is what to check.
+The real build runs in the sandbox (`npm install && vite build`), but when Node is
+available, run `npm install && npx tsc --noEmit && npx vite build` in `studio/<alias>/`
+before pushing. It catches type errors and missing imports in seconds rather than one
+build later. Do not commit the `package-lock.json` this creates unless the app already
+has one. `npm run dev` works for layout, but the API calls will not, because the dev
+server does not serve `/api` (see "Local development"). The checklist at the end of this
+file is what to check.
 
 ## File layout
 
@@ -112,12 +115,13 @@ need something it does not cover; `apiFetch` is the escape hatch.
 
 ```tsx
 import { callEndpoint, executeQuery, getMe } from "@/lib/datazone"
+import { endpointSlug } from "@/lib/resources"   // resolves a slug by name — references/api-reference.md
 
 const user = await getMe()
 const rows = await executeQuery<{ region: string; total: number }>(
   "select region, sum(amount) as total from sales group by region",
 )
-const { records } = await callEndpoint("daily-revenue", { page_size: 50 })
+const { records } = await callEndpoint(await endpointSlug("Daily Revenue"), { region: "EU" })
 ```
 
 `POST /dataset/query` returns an envelope — `{result, data_schema, row_count, duration_ms}` —
@@ -157,18 +161,22 @@ UI needs:
 | a prepared dataset the user triggers ("prepare budget plan") and then reads many times | a **view** over a query | `POST /view/refresh/{id}`, poll, then query the view |
 | records the user creates and edits | a **knowledge object** | the instance API |
 
-**Queries go in endpoints.** The SQL lives server-side, user input arrives as typed filters
-instead of being concatenated into SQL, the same query serves other consumers, and the
-bundle ships no table names. `executeQuery` is for prototyping and for ad-hoc read-only
-exploration screens; once a query is part of the app, move it into an endpoint.
+**Queries go in endpoints.** The SQL lives server-side, the same query serves other
+consumers, and the bundle ships no table names. `executeQuery` is for prototyping and for
+ad-hoc read-only exploration screens; once a query is part of the app, move it into an
+endpoint. **Filters are not bound parameters.** The query is a Jinja2 template, and values
+are pasted in unquoted and unescaped. Quote and escape strings in the template, and pass
+numbers through `| int` / `| float`, as `datazone-endpoint` shows. Otherwise a user's `'`
+rewrites the query.
 
 **Logic goes in an action, called through an endpoint.** When the result is more than one
 query — combine two queries, apply business rules, call an external service — write it as
 a Python action and give it an `action` endpoint. The app still makes one `callEndpoint`
-call. Query-string parameters become the action's parameters, and **arrive as strings**, so
-convert types inside the action. The action **must return a list** — that list is
-`records`. Action endpoints run synchronously with a 300s cap; anything close to that is a
-flow.
+call. Query-string parameters become the action's parameters and **arrive as strings**,
+whatever the type hints say, so convert them inside the action. Watch booleans in
+particular: `"false"` is truthy. The action **must return a list**, and that list is
+`records`. `page` and `page_size` are ignored, so the whole list comes back. Action
+endpoints run synchronously with a 300s cap; anything close to that is a flow.
 
 **Long work goes in a flow.** A flow run is always asynchronous: `POST /flow/run/{id}`
 returns `{run_id, status}` at once, and the app polls `GET /flow-run/get-by-id/{run_id}`
@@ -183,6 +191,10 @@ define a view whose query produces the prepared data. The button calls
 `status` is `READY` (or `ERROR`, with `error_message`), and every screen after that reads it
 with an ordinary query or endpoint — `select … from budget_plan` — fast, because a
 materialized view is a ClickHouse table. `last_sync_at` tells the user how fresh it is.
+**Endpoint results are cached for an hour**, so an endpoint over the view keeps returning
+the old rows after a refresh. Read the view with `executeQuery`, which is not cached, or
+pass `last_sync_at` into an endpoint filter that the template renders into a SQL comment,
+which changes the cache key.
 Views are not declared in `config.yml`, and they differ from the other resources in ways
 that matter:
 
@@ -206,10 +218,16 @@ that matter:
   resource lookups and calls. Components never call `apiFetch` or build paths directly.
 - **Resolve resources by name, once.** Object, flow, action and view ids differ per
   deployment; look them up by name through the list routes and cache the promise, as in
-  the knowledge-object module. Endpoint slugs are random and cannot be looked up by name —
-  keep them in one constants file, `src/lib/resources.ts`, never scattered across pages.
-- **Filter and page on the server.** Endpoints, instance lists and SQL all take limits.
-  Loading a whole table to filter it in the browser is slow and breaks at scale.
+  the knowledge-object module. **Endpoint slugs are random and differ per branch**, so a
+  slug copied from `main` makes a feature-branch app call `main`'s endpoint. Resolve them
+  the same way: `GET /endpoint/list?branch={branch}&filters=[name][$eq]:…` and read
+  `items[0].definition.slug`. Keep the names in one file, `src/lib/resources.ts`, never
+  scattered across pages.
+- **Filter and page on the server.** Instance lists take `page` and `page_size`. Endpoints
+  do not honour them, so give each endpoint `limit_rows` / `offset_rows` filters and page in
+  its SQL. Send lists as one comma-separated value, because a repeated parameter keeps only
+  its last value. Loading a whole table to filter it in the browser is slow, and every
+  query is capped at the deployment's row limit anyway.
 - **Give every async call three states** — loading, error, data — and every write a
   pending state that blocks resubmission.
 - **Re-read after a write, or after a run or refresh completes**, rather than patching
@@ -234,6 +252,7 @@ Everything goes through `apiFetch`. Paths are relative to the API root.
 | run SQL on datasets | `POST /dataset/query` (`executeQuery`) |
 | list datasets | `GET /dataset/list?filters=[project.$id][$eq]:{projectId}` |
 | call an endpoint | `GET /endpoint/{slug}?…` (`callEndpoint`) — GET only, returns `{records}` |
+| find an endpoint's slug | `GET /endpoint/list?branch={branch}&filters=[name][$eq]:…` → `items[0].definition.slug` |
 | find a flow / action by name | `GET /flow/list` or `/action/list` with `branchQuery({ name })` — both default to `main` without `branch` |
 | find a view by name | `GET /view/list?filters=[name][$eq]:…&filters=[project.$id][$eq]:{projectId}` — views have no branch |
 | start a flow | `POST /flow/run/{id}?branch={branch}` with `{parameters}` → `{run_id, status}` |
@@ -378,8 +397,9 @@ Before pushing, check that:
 - every custom colour has both a `:root` value and an `@theme inline` line
 - every knowledge object the app uses is registered under `objects:` in `config.yml`
 - every instance call passes `branch` and addresses instances by `_key`
-- every flow run and flow / action lookup passes `branch`
-- no SQL that the app depends on is concatenated from user input — it is in an endpoint
+- every flow run and every flow, action and endpoint lookup passes `branch`
+- no SQL the app depends on is concatenated from user input — it is in an endpoint whose
+  string filters are quoted and escaped in the template
 - every poll has a cap and is cleared on unmount, and every trigger is disabled while running
 - every view the app refreshes already exists, and is queried by its `name`
 
