@@ -1,6 +1,6 @@
 ---
 name: datazone-studio-app
-description: Use when building or debugging a Datazone Studio App — a Vite + React SPA that lives in the project repository and is served by Datazone behind the user's session. Triggers on "studio app", editing files under `studio/<alias>/`, an app registered under `studio_apps:` in config.yml, calling the Datazone API from a React app, `@/lib/datazone`, adding shadcn components or styling a studio app to match Datazone, or a built app that shows a blank page or 404s on its assets.
+description: Use when building or debugging a Datazone Studio App — a Vite + React SPA that lives in the project repository and is served by Datazone behind the user's session. Triggers on "studio app", editing files under `studio/<alias>/`, an app registered under `studio_apps:` in config.yml, calling the Datazone API from a React app, `@/lib/datazone`, deciding whether app logic belongs in an endpoint, action, flow or view, running a flow or refreshing a view from the app, adding shadcn components or styling a studio app to match Datazone, or a built app that shows a blank page or 404s on its assets.
 ---
 
 # Building Datazone Studio Apps
@@ -142,6 +142,88 @@ app running on a feature branch. Use the exported `branch`.
 inlined at build time. There is no `process.env` in a browser bundle, and a bundle belongs
 to exactly one branch — do not try to make it switchable at runtime.
 
+## Where the logic lives
+
+The bundle is static and public to anyone who opens the app, so keep it thin: it renders,
+collects input and calls things. Queries, business logic and long work belong in Datazone
+resources that live in the same repository and deploy in the same push. Pick by what the
+UI needs:
+
+| The UI needs… | Build | The app calls |
+|---|---|---|
+| rows from a query, possibly filtered by user input | a **query endpoint** | `callEndpoint(slug, filters)` |
+| a result that needs logic — validation, several queries, a calculation, an external call | an **action**, exposed through an **action endpoint** | `callEndpoint(slug, params)` |
+| work that takes longer than a request should — multi-step, LLM calls, loops, writing data | a **flow** | `POST /flow/run/{id}`, then poll the run |
+| a prepared dataset the user triggers ("prepare budget plan") and then reads many times | a **view** over a query | `POST /view/refresh/{id}`, poll, then query the view |
+| records the user creates and edits | a **knowledge object** | the instance API |
+
+**Queries go in endpoints.** The SQL lives server-side, user input arrives as typed filters
+instead of being concatenated into SQL, the same query serves other consumers, and the
+bundle ships no table names. `executeQuery` is for prototyping and for ad-hoc read-only
+exploration screens; once a query is part of the app, move it into an endpoint.
+
+**Logic goes in an action, called through an endpoint.** When the result is more than one
+query — combine two queries, apply business rules, call an external service — write it as
+a Python action and give it an `action` endpoint. The app still makes one `callEndpoint`
+call. Query-string parameters become the action's parameters, and **arrive as strings**, so
+convert types inside the action. The action **must return a list** — that list is
+`records`. Action endpoints run synchronously with a 300s cap; anything close to that is a
+flow.
+
+**Long work goes in a flow.** A flow run is always asynchronous: `POST /flow/run/{id}`
+returns `{run_id, status}` at once, and the app polls `GET /flow-run/get-by-id/{run_id}`
+until the status is `SUCCESS`, `FAILURE` or `CANCELED`. `result` holds the output of the
+flow's `response` node, and is only present after `SUCCESS`. While it runs, disable the
+trigger (a double-click starts two runs), show progress, and offer `POST /flow-run/cancel/{run_id}`.
+**Pass `?branch=`** — the run route defaults to `main`, not to the app's branch.
+
+**Prepared data goes in a view.** For "prepare the budget plan, then let me work with it",
+define a view whose query produces the prepared data. The button calls
+`POST /view/refresh/{id}` (202, no body), the app polls `GET /view/get-by-id/{id}` until
+`status` is `READY` (or `ERROR`, with `error_message`), and every screen after that reads it
+with an ordinary query or endpoint — `select … from budget_plan` — fast, because a
+materialized view is a ClickHouse table. `last_sync_at` tells the user how fresh it is.
+Views are not declared in `config.yml`, and they differ from the other resources in ways
+that matter:
+
+- **Create the view ahead of time, not from the app.** Views are created through the API
+  (`POST /view/create`), not deployed from the repository, and creating one needs
+  `VIEW:CREATE` on the project, which ordinary users often lack. Create it once while
+  building the app; the app only looks it up by name and refreshes it. Refreshing needs
+  `VIEW:WRITE`, so check the app's users have it.
+- **Query it by its `name`**, which is the table the data lands in. The
+  `metadata.materialized_view_name` (`…_mv`) only drives refreshes.
+- **A view is shared state.** It is project-scoped, not per branch and not per user: a
+  refresh replaces the data for everyone, and an app on a feature branch refreshes the
+  same view as `main`. If each user or scenario needs its own copy, a view is the wrong
+  tool — write the result from a flow instead, keyed by user or scenario.
+- **A view's query takes no parameters.** If "prepare" depends on the user's inputs (a
+  year, a scenario), that is a flow, not a view refresh.
+
+### Architecture rules
+
+- **Put each concern in one `src/lib/` module** — `orders.ts`, `budget.ts` — holding the
+  resource lookups and calls. Components never call `apiFetch` or build paths directly.
+- **Resolve resources by name, once.** Object, flow, action and view ids differ per
+  deployment; look them up by name through the list routes and cache the promise, as in
+  the knowledge-object module. Endpoint slugs are random and cannot be looked up by name —
+  keep them in one constants file, `src/lib/resources.ts`, never scattered across pages.
+- **Filter and page on the server.** Endpoints, instance lists and SQL all take limits.
+  Loading a whole table to filter it in the browser is slow and breaks at scale.
+- **Give every async call three states** — loading, error, data — and every write a
+  pending state that blocks resubmission.
+- **Re-read after a write, or after a run or refresh completes**, rather than patching
+  local state and hoping it matches.
+- **Poll with a cap.** Start at about 1s, back off to about 5s, stop after a sensible
+  limit, and clear the timer on unmount. A run or refresh started before a reload is still
+  running: on mount, check `GET /flow-run/list?flow_id=…&branch=…` or the view's `status`
+  and resume polling instead of starting another.
+- **Surface permission errors.** Each resource has its own permission — `ENDPOINT:INVOKE`
+  (and `ACTION:INVOKE` for action endpoints), `FLOW:EXECUTE`, `VIEW:WRITE` to refresh a
+  view. A 403 is a message the user can take to an admin; show it.
+- **Put nothing in the bundle that must stay private** — no keys, no credentials for
+  external services. An action or flow holds those server-side.
+
 ## Fundamental endpoints
 
 Everything goes through `apiFetch`. Paths are relative to the API root.
@@ -151,7 +233,12 @@ Everything goes through `apiFetch`. Paths are relative to the API root.
 | who is looking | `GET /user/me` |
 | run SQL on datasets | `POST /dataset/query` (`executeQuery`) |
 | list datasets | `GET /dataset/list?filters=[project.$id][$eq]:{projectId}` |
-| call an endpoint | `GET /endpoint/{slug}?…` (`callEndpoint`) |
+| call an endpoint | `GET /endpoint/{slug}?…` (`callEndpoint`) — GET only, returns `{records}` |
+| find a flow / action by name | `GET /flow/list` or `/action/list` with `branchQuery({ name })` — both default to `main` without `branch` |
+| find a view by name | `GET /view/list?filters=[name][$eq]:…&filters=[project.$id][$eq]:{projectId}` — views have no branch |
+| start a flow | `POST /flow/run/{id}?branch={branch}` with `{parameters}` → `{run_id, status}` |
+| poll a flow run | `GET /flow-run/get-by-id/{run_id}` → `status`, `result`, `error_message` |
+| refresh a view | `POST /view/refresh/{id}` → 202; poll `GET /view/get-by-id/{id}` for `status` |
 | find an object by name | `GET /knowledge-object/list?branch={branch}&filters=[name][$eq]:Order` |
 | list instances | `GET /knowledge-object/{id}/instances?branch={branch}&page=1&page_size=50` |
 | one instance | `GET /knowledge-object/{id}/instances/{key}?branch={branch}&add_relationships=true` |
@@ -291,6 +378,10 @@ Before pushing, check that:
 - every custom colour has both a `:root` value and an `@theme inline` line
 - every knowledge object the app uses is registered under `objects:` in `config.yml`
 - every instance call passes `branch` and addresses instances by `_key`
+- every flow run and flow / action lookup passes `branch`
+- no SQL that the app depends on is concatenated from user input — it is in an endpoint
+- every poll has a cap and is cleared on unmount, and every trigger is disabled while running
+- every view the app refreshes already exists, and is queried by its `name`
 
 Then push, build, and read the Builds tab.
 
@@ -299,12 +390,13 @@ Then push, build, and read the Builds tab.
 - `datazone-knowledge-object` — the object YAML, primary keys, migration lifecycle
 - `datazone-api` — auth, filter syntax, pagination, links
 - `datazone-intelligent-app` — declarative dashboards, when an SPA is more than you need
-- `datazone-endpoint` — publish a query as a REST endpoint the app can call
+- `datazone-endpoint` — publish a query or an action as a REST endpoint the app can call
+- `datazone-flow` — long-running, multi-step work the app starts and polls
 - `datazone-project-setup` — cloning, profiles, the deploy loop
 
 ## Reference
 
-- `references/api-reference.md` — the SDK surface and a worked knowledge-object module
+- `references/api-reference.md` — the SDK surface, and worked knowledge-object, flow and view modules
 - `references/styling.md` — the shadcn setup, the complete theme, and layout samples
 
 Official docs: https://docs.datazone.co/reference/studio-apps/overview

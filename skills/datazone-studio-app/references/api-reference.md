@@ -227,9 +227,156 @@ const { records } = await callEndpoint<{ day: string; revenue: number }>("daily-
 })
 ```
 
-Prefer an endpoint over `executeQuery` when the same query is used by more than one
-consumer, or when you would otherwise interpolate user input into SQL. See
-`datazone-endpoint`.
+Prefer an endpoint over `executeQuery` for any query the app depends on: the SQL stays
+server-side and user input arrives as typed filters. See `datazone-endpoint`.
+
+`GET /endpoint/{slug}` is the only call — there is no POST variant — and the response is
+always `{records}`, whether the endpoint is a query, an action or a vector search. The
+slug lookup is not branch-aware. `page`, `page_size` and `sort_by` are reserved; every
+other parameter is a filter or an action parameter.
+
+## Logic in an action, called through an endpoint
+
+```python
+# actions/budget_summary.py — registered under `actions:` in config.yml
+@action
+def budget_summary(year: str, department: str) -> list[dict]:
+    year = int(year)   # endpoint parameters arrive as strings
+    ...
+    return [{"department": department, "planned": planned, "actual": actual}]
+```
+
+```yaml
+# endpoints/budget-summary.yml
+endpoints:
+  - name: Budget Summary
+    type: action
+    config:
+      action_id: <the action's id>
+```
+
+```ts
+const { records } = await callEndpoint<BudgetRow>(SLUGS.budgetSummary, { year: 2026, department })
+```
+
+The action must return a list — a dict or a scalar fails the call. Missing required
+parameters return 400. The call is synchronous with a 300s cap; longer work is a flow.
+
+## Long work in a flow
+
+`POST /flow/run/{id}` only queues the run. Poll it, and read `result` — the output of the
+flow's `response` node — once the status is `SUCCESS`.
+
+```ts
+// src/lib/forecast.ts
+import { apiFetch, branch, branchQuery } from "@/lib/datazone"
+
+type RunStatus = "CREATED" | "RUNNING" | "SUCCESS" | "FAILURE" | "CANCELED"
+type FlowRun<T> = { id: string; status: RunStatus; result?: T | null; error_message?: string | null }
+
+const TERMINAL: RunStatus[] = ["SUCCESS", "FAILURE", "CANCELED"]
+
+let flowIdPromise: Promise<string> | undefined
+
+export function forecastFlowId(): Promise<string> {
+  flowIdPromise ??= apiFetch<{ items: { id: string }[] }>(
+    `/flow/list?${branchQuery({ name: "Build Forecast" })}`,
+  ).then((response) => {
+    const flow = response.items[0]
+    if (!flow) throw new Error(`Flow "Build Forecast" is not deployed on ${branch}`)
+    return flow.id
+  })
+  return flowIdPromise
+}
+
+export async function startForecast(parameters: Record<string, unknown>): Promise<string> {
+  const id = await forecastFlowId()
+  // branch is not optional here: the route defaults to main
+  const { run_id } = await apiFetch<{ run_id: string }>(`/flow/run/${id}?branch=${branch}`, {
+    method: "POST",
+    body: JSON.stringify({ parameters }),
+  })
+  return run_id
+}
+
+/** Polls until the run ends; rejects on failure, cancel, abort or timeout. */
+export async function waitForRun<T>(runId: string, signal?: AbortSignal, maxWaitMs = 15 * 60_000): Promise<T> {
+  const started = Date.now()
+  let delay = 1000
+  for (;;) {
+    const run = await apiFetch<FlowRun<T>>(`/flow-run/get-by-id/${runId}`, { signal })
+    if (run.status === "SUCCESS") return run.result as T
+    if (TERMINAL.includes(run.status)) throw new Error(run.error_message ?? `Run ${run.status.toLowerCase()}`)
+    if (Date.now() - started > maxWaitMs) throw new Error("The run is taking longer than expected")
+    await new Promise((resolve) => setTimeout(resolve, delay))
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError")
+    delay = Math.min(delay * 1.5, 5000)
+  }
+}
+
+export async function cancelRun(runId: string): Promise<void> {
+  await apiFetch(`/flow-run/cancel/${runId}`, { method: "POST" })
+}
+```
+
+In the page, disable the button from the click until the run ends, pass an
+`AbortController` signal and abort it in the effect cleanup, and on mount check
+`GET /flow-run/list?flow_id={id}&branch={branch}&limit=1` (a bare array, newest first) so a
+reload resumes a running run instead of starting another. Per-node detail is in
+`GET /flow-run/logs/{run_id}`.
+
+## Prepared data in a view
+
+A view whose query produces the prepared data — created once while building the app
+(`POST /view/create` with `{name, project, type: "MATERIALIZED", source_type: "QUERY", query}`),
+never from the app. The app finds it, refreshes it on demand and reads it by name.
+
+```ts
+// src/lib/budget-plan.ts
+import { apiFetch, executeQuery, projectId } from "@/lib/datazone"
+
+type ViewStatus = "NOT_READY" | "CREATING" | "REFRESHING" | "ERROR" | "READY"
+type View = { id: string; name: string; status: ViewStatus; error_message?: string | null; last_sync_at?: string | null }
+
+const VIEW_NAME = "budget_plan"
+
+async function budgetPlanView(): Promise<View> {
+  const response = await apiFetch<{ items: View[] }>(
+    `/view/list?filters=[name][$eq]:${VIEW_NAME}&filters=[project.$id][$eq]:${projectId}`,
+  )
+  const view = response.items[0]
+  if (!view) throw new Error(`View ${VIEW_NAME} does not exist in this project`)
+  return view
+}
+
+/** Starts a refresh and resolves once the view is READY again. */
+export async function prepareBudgetPlan(signal?: AbortSignal): Promise<View> {
+  const { id } = await budgetPlanView()
+  await apiFetch(`/view/refresh/${id}`, { method: "POST", signal })   // 202, no body
+  let delay = 1000
+  for (let elapsed = 0; elapsed < 10 * 60_000; elapsed += delay) {
+    await new Promise((resolve) => setTimeout(resolve, delay))
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError")
+    const view = await apiFetch<View>(`/view/get-by-id/${id}`, { signal })
+    if (view.status === "READY") return view
+    if (view.status === "ERROR") throw new Error(view.error_message ?? "Preparing the budget plan failed")
+    delay = Math.min(delay * 1.5, 5000)
+  }
+  throw new Error("Preparing the budget plan is taking longer than expected")
+}
+
+export const budgetPlanRows = () =>
+  executeQuery<{ department: string; month: string; amount: number }>(
+    `select department, month, amount from ${VIEW_NAME} order by department, month`,
+  )
+```
+
+The refresh route sets `REFRESHING` before it returns, and a background task moves the
+view back to `READY` (or `ERROR`) when ClickHouse finishes — so poll every few seconds, not
+in a tight loop. Show `last_sync_at` next to the data so the user
+knows when it was prepared, and remember the view is shared: a refresh by one user
+changes what everyone sees. A materialized view built on a dataset also refreshes itself
+when that dataset refreshes.
 
 ## Managing the app itself
 
