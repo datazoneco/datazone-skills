@@ -1,6 +1,6 @@
 ---
 name: datazone-studio-app
-description: Use when building or debugging a Datazone Studio App — a Vite + React SPA that lives in the project repository and is served by Datazone behind the user's session. Triggers on "studio app", editing files under `studio/<alias>/`, an app registered under `studio_apps:` in config.yml, calling the Datazone API from a React app, `@/lib/datazone`, deciding whether app logic belongs in an endpoint, action, flow or view, running a flow or refreshing a view from the app, adding shadcn components or styling a studio app to match Datazone, or a built app that shows a blank page or 404s on its assets.
+description: Use when building or debugging a Datazone Studio App — a Vite + React SPA that lives in the project repository and is served by Datazone behind the user's session. Triggers on "studio app", editing files under `studio/<alias>/`, an app registered under `studio_apps:` in config.yml, calling the Datazone API from a React app, `@/lib/datazone`, deciding whether app logic belongs in an endpoint, action, flow or view, running a flow or refreshing a view from the app, adding shadcn components or styling a studio app to match Datazone, building a dashboard or charts, branding an app for a customer, making an app look polished or professional, or a built app that shows a blank page or 404s on its assets.
 ---
 
 # Building Datazone Studio Apps
@@ -360,6 +360,14 @@ which token to use for what, the layout shell, and worked list / card-grid / dia
 pages. Read it when writing UI, when an app looks wrong next to Datazone, or when
 `src/index.css` has drifted and you need the original back.
 
+**`references/design.md` is how to make it look good** — brand colours through tokens, the
+page anatomy (header, tabs, KPI row, chart cards), loading / error / empty states, chart
+conventions, and how to screenshot the app before pushing. Read it before building any
+dashboard-style app, and whenever the request is to make an app "pretty" or "professional".
+The short version: stay in the Datazone look (light, slate, thin borders), carry the brand
+through `--primary` and the `--chart-*` ramp only, explain every chart in one sentence, and
+design the states. Do not force dark mode or add gradients.
+
 ## Local development
 
 `npm install && npm run dev` renders the app, but `BASE_URL` is `/`, so the SDK resolves
@@ -400,6 +408,7 @@ Before pushing, check that:
 - every flow run and every flow, action and endpoint lookup passes `branch`
 - no SQL the app depends on is concatenated from user input — it is in an endpoint whose
   string filters are quoted and escaped in the template
+- colours come from tokens (charts too, as `var(--chart-N)`), and the app has loading, error and empty states
 - every poll has a cap and is cleared on unmount, and every trigger is disabled while running
 - every view the app refreshes already exists, and is queried by its `name`
 
@@ -418,5 +427,6 @@ Then push, build, and read the Builds tab.
 
 - `references/api-reference.md` — the SDK surface, and worked knowledge-object, flow and view modules
 - `references/styling.md` — the shadcn setup, the complete theme, and layout samples
+- `references/design.md` — branding through tokens, page anatomy, KPI and chart conventions, states, and visual checks
 
 Official docs: https://docs.datazone.co/reference/studio-apps/overview
