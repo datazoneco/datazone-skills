@@ -39,7 +39,7 @@ cp -r datazone-skills/skills/datazone-intelligent-app ~/.claude/skills/
 | `datazone-flow` | Declarative YAML orchestration — LLM, REST, action, and Python nodes |
 | `datazone-knowledge-object` | Versioned business entities — fields, primary keys, relationships, actions |
 | `datazone-api` | Calling the Datazone REST API — auth, filters, sorting, pagination, links |
-| `datazone-studio-app` | Building Vite + React studio apps — the SDK, knowledge object CRUD, components, styling |
+| `datazone-studio-app` | Building Vite + React studio apps — the SDK, knowledge object CRUD, components, styling, dashboard design |
 
 More on the way: extracts.
 
