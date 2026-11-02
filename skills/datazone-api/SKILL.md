@@ -157,6 +157,7 @@ GET /api/v1/endpoint/{slug}?page=1&page_size=50
 ## Related
 
 - `datazone-endpoint` — publishing your own query as an API
+- `datazone-settings` — users, roles, policies, API keys, audit logs, usage analytics
 - `datazone-project-setup` — profiles and where the API key lives
 
 Official docs: https://docs.datazone.co/reference/integration/overview
