@@ -1,0 +1,34 @@
+# Action endpoint over customer_totals.py.
+#
+# Deploy the action first, then look up its id; endpoints load before actions in a deploy,
+# so the endpoint cannot point at an action that is pushed in the same commit.
+#   curl -g -H "x-api-key: $DATAZONE_API_KEY" \
+#     "https://<your-host>/api/v1/action/list?filters=[project.\$id][\$eq]:<project_id>&filters=[name][\$eq]:customer_totals"
+#   # -> items[0].id
+#
+# config.yml:
+#   actions:
+#     - path: actions/customer_totals.py
+#   endpoints:
+#     - path: endpoints/customer-totals.yml
+#
+# Call:
+#   curl -G -H "x-api-key: $DATAZONE_API_KEY" \
+#     "https://<your-host>/api/v1/endpoint/customer-totals-5283d945" \
+#     --data-urlencode region=US --data-urlencode min_total=100 \
+#     --data-urlencode include_orders=true
+#
+# Response (200):
+#   {"records": [{"customer_name": "Globex", "total": 450.0, "orders": 2}]}
+#
+# Errors:
+#   region omitted   -> 400 "Missing required parameter 'region' for action 'customer_totals'"
+#   foo=1            -> 400 "Unknown parameter(s) ['foo'] for action 'customer_totals'"
+#   region=XX        -> 500 ActionExecutionFailedError; `message` carries the exception text,
+#                       traceback, stdout and stderr, and the caller sees all of it
+#   page / page_size -> ignored; the whole list comes back
+endpoint:
+  name: Customer Totals
+  type: action
+  config:
+    action_id: 6afc817f233ea43405bba945   # the action's id, not its name or path

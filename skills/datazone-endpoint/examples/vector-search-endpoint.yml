@@ -1,0 +1,41 @@
+# Vector search endpoint. The vector must exist and be INDEXED; vectors are not declared
+# in the repository, so create one in the UI or with POST /vector/create, then take its id:
+#   curl -g -H "x-api-key: $DATAZONE_API_KEY" \
+#     "https://<your-host>/api/v1/vector/list?filters=[project.\$id][\$eq]:<project_id>"
+#   # -> items[].id, and index_status must be INDEXED
+#
+# config.yml:
+#   endpoints:
+#     - path: endpoints/search-help.yml
+#
+# The call takes exactly three parameters, none of them declared here:
+#   query            required
+#   limit            default 10; must be an integer >= 1
+#   score_threshold  optional; a number, compared to the cosine score
+# Any other parameter is ignored silently, and `filters` under config do nothing.
+#
+# Call:
+#   curl -G -H "x-api-key: $DATAZONE_API_KEY" \
+#     "https://<your-host>/api/v1/endpoint/search-help-articles-6936f511" \
+#     --data-urlencode "query=how long does delivery take" --data-urlencode limit=2
+#
+# Response (200), payload trimmed:
+#   {"records": [
+#     {"id": "3d2e9968-4268-43f4-9e7f-cacf902bd2e3", "score": 0.44485182,
+#      "payload": {"document_id": "2", "chunk_index": 1, "source": "dataset",
+#                  "dataset_alias": "help_articles_d53586", "row_index": 1,
+#                  "content": "Shipping times EU orders ship in 2 to 4 business days. ..."}},
+#     {"id": "bb0db0e7-...", "score": 0.39493418, "payload": {"document_id": "3", ...}}]}
+#
+# Errors:
+#   query omitted          -> 400 "Missing required parameter 'query' for vector search endpoint"
+#   limit=abc              -> 400 "Parameter 'limit' must be an integer, got 'abc'."
+#   score_threshold=0,3    -> 400 "Parameter 'score_threshold' must be a number, got '0,3'."
+#   limit=0                -> 422 UnexpectedResponse
+#   score_threshold=0.5    -> {"records": []} here; the best match scored 0.44, so check
+#                             real scores before you pick a threshold
+endpoint:
+  name: Search Help Articles
+  type: vector
+  config:
+    vector_id: 6afc81fe33966f79223b86bf   # the vector's id

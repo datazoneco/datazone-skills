@@ -1,0 +1,15 @@
+# FROM names the dataset by its alias, not its name: a pipeline output named `sales` gets
+# `sales_<6 hex>`. Replace sales_a1b2c3 with the alias from GET /dataset/list after the first run.
+endpoint:
+  name: Sales By Day
+  type: query
+  config:
+    query: |
+      SELECT day, round(sum(amount), 2) AS revenue, count() AS orders
+      FROM sales_a1b2c3
+      WHERE day >= today() - {{ (days or 30) | int }}
+      GROUP BY day
+      ORDER BY day
+    filters:
+      - name: days
+        type: integer

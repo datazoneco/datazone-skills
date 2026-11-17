@@ -194,6 +194,30 @@ items:
         span: 4
 ```
 
+## Letting the assistant run actions
+
+The app's AI assistant can run project [actions](https://docs.datazone.co/reference/development/actions)
+for the user, e.g. "escalate ticket 1". List them by id under `config`:
+
+```yaml
+app:
+  name: "Tickets"
+  config:
+    agent_runnable_actions:
+      - "6afc8477233ea43405bba98e"   # GET /action/list?filters=[project.$id][$eq]:<project_id>
+```
+
+- Only actions **of the app's own project, deployed on `main`**, are offered. Any other id
+  is dropped silently. The deploy doesn't complain, the assistant just can't see it.
+- The assistant picks the action from its function name and docstring, and fills the
+  parameters from the conversation, so write a clear docstring.
+- An action file imports the decorator with `from datazone.actions import action`.
+  `from datazone import action` deploys fine and then fails every call with
+  `ImportError: cannot import name 'action'`.
+- Check it by asking the app's chat to run it. A failed call comes back as
+  `"status": "ERROR"`; read the traceback with
+  `GET /action-call/list?filters=[action.$id][$eq]:<action_id>&sort_by=-created_at`.
+
 ## Gotchas
 
 - **All attribute names are case-sensitive.**
