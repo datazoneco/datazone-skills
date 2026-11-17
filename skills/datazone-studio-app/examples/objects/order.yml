@@ -1,0 +1,20 @@
+name: Order
+description: A customer order, created and edited from the studio app
+
+fields:
+  - name: order_no
+    type: str
+    primary_key: true
+  - name: customer
+    type: str
+  - name: status
+    type: str
+    options: [DRAFT, PAID, SHIPPED, CANCELLED]
+  - name: total
+    type: float
+    optional: true
+  - name: ordered_at
+    type: date
+
+settings:
+  label_column: order_no

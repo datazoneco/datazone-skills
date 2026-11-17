@@ -1,6 +1,6 @@
 ---
 name: datazone-settings
-description: Use when administering a Datazone organisation over the API or Settings — users, invites, roles, policies, permissions, API keys, audit logs, quotas, or usage analytics. Triggers on "create a policy", "give X read access to project Y", "invite a user", "assign a role", "who has access", "API key scopes", "audit log", "who called the API", "token usage last month", "DCU / compute usage", "storage usage", "query usage", "how much did we use", a 403 with `required_action`, or "Permission denied" on a settings call.
+description: Use when administering a Datazone organisation over the API or Settings — users, invites, roles, project roles, policies, permissions, API keys, notification channels, audit and export logs, quotas, or usage analytics. Triggers on "create a policy", "project maintainer", "email channel", "SMTP relay", "who exported", "export log", "give X read access to project Y", "invite a user", "assign a role", "who has access", "API key scopes", "audit log", "who called the API", "token usage last month", "DCU / compute usage", "storage usage", "query usage", "how much did we use", a 403 with `required_action`, or "Permission denied" on a settings call.
 ---
 
 # Datazone Settings and Administration
@@ -52,6 +52,29 @@ Every organisation gets three built-in roles (each has one built-in policy). The
 | `admin` | All Access Policy | `*:*` on `*` |
 | `contributor` | Contributor Policy | `*:*`, minus `*:manage` and minus creating, editing or assigning roles, policies, users and model accounts |
 | `viewer` | Read Only Policy | `*:read` on `*` |
+
+### Project roles
+
+Create a project with `create_project_roles: true` and Datazone also creates three roles
+scoped to it, each with its own policy:
+
+```bash
+POST /project/create  {"name": "Sales", "create_project_roles": true}
+# → roles Sales-maintainer, Sales-contributor, Sales-reader
+#   policies "Sales Maintainer Policy", "Sales Contributor Policy", "Sales Reader Policy"
+```
+
+| Role | Can |
+|---|---|
+| `<project>-maintainer` | Everything in the project except delete it |
+| `<project>-contributor` | Same as maintainer, except push to the default branch. Their work reaches `main` through a pull request a maintainer merges |
+| `<project>-reader` | Read the project, its repository, its file container and every entity in it |
+
+They are ordinary roles: assign users with `assign-user` / `assign-role` as usual. They
+are named after the project at creation time and are **not** renamed or deleted with the
+project, so clean them up yourself (`DELETE /role/delete/{id}`, then
+`DELETE /policy/delete/{id}`). Existing projects don't get them retroactively; build the
+same three policies by hand (statements in `references/policies.md`).
 
 A statement:
 
@@ -182,6 +205,30 @@ POST /api-key/revoke/{id}             # revoke anyone's key; stays listed as rev
 - Never print the returned key. Write it straight to a secret store or an environment
   variable.
 
+### Notification channels
+
+Channels are where reports and alerts are delivered. All writes need `organisation:manage`;
+listing is open to everyone so they can pick a channel for a report.
+
+```bash
+POST /notification-channel/create
+{"name": "Ops relay",
+ "channel_configuration": {"channel_type": "EMAIL", "email_address": "reports@acme.com",
+                           "smtp_host": "relay.acme.internal", "smtp_port": 25,
+                           "auth_type": "none", "use_tls": false}}
+GET    /notification-channel/list
+PUT    /notification-channel/update/{id}   {"channel_configuration": {"channel_type": "EMAIL", ...changed fields}}
+DELETE /notification-channel/delete/{id}   # also deletes the reports that use it
+```
+
+- `channel_type` is upper case: `EMAIL` or `SLACK`. Lower case fails with
+  `union_tag_invalid`.
+- `auth_type` is `basic` (default) or `none`. `basic` needs `smtp_username` and
+  `smtp_password`, otherwise 400 `SmtpCredentialsRequiredError`. Use `none` for an SMTP
+  relay that accepts mail without a login: any username and password you send are
+  dropped.
+- `smtp_port` defaults to `587`, `use_tls` to `true`.
+
 ### Audit logs and usage analytics
 
 The audit log records every authenticated **write** request (`POST`, `PUT`, `PATCH`,
@@ -200,6 +247,7 @@ action calls, flow runs and studio app sessions. For "who read what", use
 | "Total usage of everything this month" | `GET /organisation/get-usage-summary/{org_id}?from_date=...&to_date=...` |
 | "Failed write calls in the last 7 days" | `GET /organisation/audit-logs?from_date=...&status=failed&sort_by=-timestamp` |
 | "Who is most active" | `GET /organisation/audit-logs-metrics?from_date=...` |
+| "Who exported data / what left the platform" | `GET /export-log/list?sort_by=-created_at` |
 | "What did people ask Orion / apps" | `GET /organisation/orion-logs?from_date=...` (`orion:manage`) |
 | "Quotas" | `GET /organisation/quota/list`, `POST/PUT/DELETE /organisation/quota...` |
 

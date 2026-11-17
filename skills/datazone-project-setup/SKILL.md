@@ -84,15 +84,29 @@ the URL, which is why no username or password is asked for.
 ## What a project repository contains
 
 ```
-config.yml           # the manifest — nothing deploys unless it is listed here
+config.yml              # the manifest — nothing deploys unless it is listed here
+orion-instructions.md   # project guidance Orion follows (created with the project)
 pipelines/
 apps/
 endpoints/
+skills/<name>/SKILL.md  # Orion project skills — loaded without a config.yml entry
 ```
 
 `config.yml` declares `project_name`, `project_id`, and one list per resource type
-(`pipelines`, `apps`, `endpoints`, `actions`, `flows`, `objects`). Paths are free-form;
-the directory names above are convention, not requirement.
+(`pipelines`, `apps`, `endpoints`, `actions`, `flows`, `objects`, `widgets`,
+`studio_apps`, `rulesets`). Paths are free-form; the directory names above are
+convention, not requirement.
+
+Two files are read without being listed in `config.yml`:
+
+- **`orion-instructions.md`** at the root: the project's purpose, datasets and
+  conventions. Orion follows it in chats about the project and when reviewing pull
+  requests, where it is read from the **base** branch, so a pull request can't change the
+  rules of its own review.
+- **`skills/<name>/SKILL.md`** (plus any reference files next to it): a project skill for
+  Orion Prime, in the same format as these skills (`name` and `description` frontmatter).
+  Skills load when `main` is deployed; pushes to other branches don't change them. Check
+  with `GET /skill/list`.
 
 `config.yml` uses `extra="forbid"` — one unrecognised key fails the entire deploy.
 

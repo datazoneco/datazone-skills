@@ -1,0 +1,17 @@
+# A `pipelines:` entry with every option. Paste under `pipelines:` in the project's
+# config.yml and delete what you do not need; only `alias` and `path` are required.
+pipelines:
+  - alias: daily_sales                # identity; renaming it deletes the old pipeline
+    path: pipelines/daily_sales.py
+    name: Daily sales                 # display name; defaults to the path
+    compute: XSMALL                   # XSMALL | SMALL | MEDIUM | LARGE | XLARGE
+    depends:                          # aliases in THIS file; each runs in full first
+      - raw_orders
+    python_dependencies:              # pip-installed before the transforms run
+      - name: tabulate
+        version: "0.9.0"
+    spark_config:
+      deploy_mode: client             # local (default): driver only | client: + executor pods
+      executor_instances: 1           # client mode only
+      extra_spark_config:             # any Spark property; values as strings
+        spark.sql.shuffle.partitions: "8"

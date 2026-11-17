@@ -40,8 +40,10 @@ class DatazoneAuthError extends Error   // 401; session gone, cannot be renewed 
 class DatazoneApiError extends Error    // any other non-2xx; has .status and the API message
 ```
 
-`apiFetch` sets `Content-Type: application/json` when there is a body, returns `undefined`
-for `204`, and turns the API's `detail` into the error message. `callEndpoint` repeats
+`apiFetch` sets `Content-Type: application/json` when there is a body, and returns `undefined`
+for `204`. For the error message it reads only a string `detail`; Datazone's own errors are
+`{message, detail: {…}, error_class}`, so as scaffolded the message is the whole JSON body.
+Add the `message` branch to `readError` (`SKILL.md` shows it) before showing errors to users. `callEndpoint` repeats
 array values as query parameters, but **the endpoint route keeps only the last one**. Send
 a list as one comma-separated string, and split it in the endpoint's SQL
 (`splitByChar`; see `datazone-endpoint`).
@@ -54,7 +56,7 @@ validation failure, a key collision).
 
 | Operation | Request |
 |---|---|
-| resolve the object id | `GET /knowledge-object/list?branch={branch}&filters=[name][$eq]:{Name}` |
+| resolve the object id | `GET /knowledge-object/list?branch={branch}&filters=[name][$eq]:{Name}&filters=[project.$id][$eq]:{projectId}` |
 | list | `GET /knowledge-object/{id}/instances?branch={branch}&page=1&page_size=50` |
 | get | `GET /knowledge-object/{id}/instances/{key}?branch={branch}&add_relationships=true` |
 | create | `POST /knowledge-object/{id}/instances?branch={branch}` |
@@ -66,7 +68,8 @@ validation failure, a key collision).
 Two different filter formats are in play, which is the most common mistake here:
 
 - **The object list** uses the API's standard syntax — `filters=[name][$eq]:Order` — which
-  is what `branchQuery` builds.
+  is what `branchQuery` builds. It spans every project in the organisation, so filter on
+  `project.$id` as well.
 - **The instance list** uses repeated `filters`, each a URL-encoded JSON object
   `{"column": …, "operator": …, "value": …}`, ANDed together. Operators: `equal`,
   `not_equal`, `contains`, `not_contains`, `greater_than`, `less_than`. There is no OR and
@@ -84,8 +87,8 @@ Keep the id lookup and the calls in one place so `branch` and the paths are writ
 and have components call this rather than `apiFetch` directly.
 
 ```ts
-// src/lib/orders.ts
-import { apiFetch, branch, branchQuery } from "@/lib/datazone"
+// src/lib/orders.ts — a fuller, tested version is assets/src/lib/orders.ts
+import { apiFetch, branch, branchQuery, projectId } from "@/lib/datazone"
 
 export type Order = {
   _key: string
@@ -104,7 +107,7 @@ let objectIdPromise: Promise<string> | undefined
 /** Resolved once per session, not per component. */
 export function orderObjectId(): Promise<string> {
   objectIdPromise ??= apiFetch<Page<{ id: string }>>(
-    `/knowledge-object/list?${branchQuery({ name: "Order" })}`,
+    `/knowledge-object/list?${branchQuery({ name: "Order", "project.$id": projectId })}`,
   ).then((response) => {
     const object = response.items[0]
     if (!object) throw new Error(`Object Order is not deployed on ${branch}`)
@@ -211,13 +214,14 @@ Remember the route: this page does nothing until `App.tsx` has
 ```ts
 // Read-only analytics. Runs with the signed-in user's dataset permissions.
 // Resolves to the rows themselves — the endpoint's envelope is already unwrapped.
+// The table is the dataset's alias (sales_<6 hex>), never its name.
 const rows = await executeQuery<{ region: string; total: number }>(
-  "select region, sum(amount) as total from sales group by region",
+  "select region, sum(amount) as total from sales_a1b2c3 group by region",
 )
 
 // When the app needs the column types, the row count or how long it took:
 const execution = await executeQueryWithMetadata<{ region: string; total: number }>(
-  "select region, sum(amount) as total from sales group by region",
+  "select region, sum(amount) as total from sales_a1b2c3 group by region",
 )
 const columns = execution.data_schema ?? []   // [{ name: "region", type: "String" }, …]
 
@@ -244,7 +248,7 @@ endpoint:
   config:
     query: |
       SELECT category, sum(amount) AS revenue
-      FROM sales
+      FROM sales_a1b2c3
       WHERE country = '{{ country | replace("\\", "\\\\") | replace("'", "\\'") }}'
       {% if min_quantity %}AND quantity >= {{ min_quantity | int }}{% endif %}
       GROUP BY category
@@ -256,7 +260,7 @@ endpoint:
         type: integer
 ```
 
-`GET /endpoint/{slug}` is the only call — there is no POST variant — and the response is
+`FROM` takes the dataset's alias, as in `executeQuery`. `GET /endpoint/{slug}` is the only call — there is no POST variant — and the response is
 always `{records}`, whether the endpoint is a query, an action or a vector search. `page`,
 `page_size` and `sort_by` are accepted but **ignored**, so page and sort in the SQL with
 filters of your own (`limit_rows`, `offset_rows`). Every other parameter must be a declared
@@ -300,7 +304,7 @@ export function endpointSlug(name: string): Promise<string> {
 }
 ```
 
-The top-level `slug` on a list item is empty; the served one is `definition.slug`.
+A list item has no top-level `slug`; the served one is `definition.slug`.
 
 ## Logic in an action, called through an endpoint
 
@@ -340,7 +344,7 @@ flow's `response` node — once the status is `SUCCESS`.
 
 ```ts
 // src/lib/forecast.ts
-import { apiFetch, branch, branchQuery } from "@/lib/datazone"
+import { apiFetch, branch, branchQuery, projectId } from "@/lib/datazone"
 
 type RunStatus = "CREATED" | "RUNNING" | "SUCCESS" | "FAILURE" | "CANCELED"
 type FlowRun<T> = { id: string; status: RunStatus; result?: T | null; error_message?: string | null }
@@ -351,7 +355,7 @@ let flowIdPromise: Promise<string> | undefined
 
 export function forecastFlowId(): Promise<string> {
   flowIdPromise ??= apiFetch<{ items: { id: string }[] }>(
-    `/flow/list?${branchQuery({ name: "Build Forecast" })}`,
+    `/flow/list?${branchQuery({ name: "Build Forecast", "project.$id": projectId })}`,
   ).then((response) => {
     const flow = response.items[0]
     if (!flow) throw new Error(`Flow "Build Forecast" is not deployed on ${branch}`)
@@ -456,7 +460,8 @@ Rarely needed from inside the app, but this is the surface:
 | Call | Purpose |
 |---|---|
 | `GET /studio-app/list?branch={branch}` | Apps on a branch with their build state |
-| `GET /studio-app/get-by-id/{id}?branch={branch}` | Status, served `url`, `is_stale`, commits |
+| `GET /studio-app/get-by-id/{id}?branch={branch}` | Status, served `url` (relative to the frontend's mount), `is_stale`, commits |
+| `GET /studio-app/{id}/session-stats?days=30` | Sessions, distinct users, per day and per branch — needs `organisation:manage` |
 | `POST /studio-app/create` | `{name, project, branch?}` — scaffolds and registers |
 | `PUT /studio-app/update/{id}` | Rewrite the `config.yml` entry |
 | `POST /studio-app/{id}/build?branch={branch}` | Queue a build |

@@ -20,10 +20,10 @@ route that silently does not exist.
 
 ## Before you start
 
-The app must already exist. Create it in the UI ("New studio app") or with
-`POST /studio-app/create`, which scaffolds every file below and registers it in
-`config.yml` in one commit. Do not hand-write the scaffold — pull the branch and edit
-what is there.
+The app must already exist. Create it in the UI ("New studio app"), with
+`datazone studio-app create --name "Sales Dashboard" --project-id <id> [--branch …]`, or with
+`POST /studio-app/create`. Each scaffolds every file below and registers it in `config.yml` in
+one commit. Do not hand-write the scaffold — pull the branch and edit what is there.
 
 ```yaml
 # config.yml — created for you
@@ -39,14 +39,23 @@ Registration is what makes the app appear in Datazone. It does **not** build it.
 
 1. Edit files under `studio/<alias>/`
 2. `git add`, `git commit`, `git push`
-3. Build — the Build button, or `POST /studio-app/{id}/build?branch=<branch>`
-4. Check the Builds tab; the app is served only after the build reaches `READY`
+3. Build — the Build button, `datazone studio-app build <app_id> --branch <branch>`, or
+   `POST /studio-app/{id}/build?branch=<branch>`
+4. Check the Builds tab (or `datazone studio-app builds logs <build_id> --follow`); the app is
+   served only after the build reaches `READY`
+5. Open it and click through every page. `datazone studio-app show <app_id>` gives the
+   served `url`, relative to where the Datazone frontend is mounted: on a deployment served
+   under `/app`, open `https://<your-host>/app/studio/…`, not `https://<your-host>/studio/…`
 
 The real build runs in the sandbox (`npm install && vite build`), but when Node is
 available, run `npm install && npx tsc --noEmit && npx vite build` in `studio/<alias>/`
 before pushing. It catches type errors and missing imports in seconds rather than one
-build later. Do not commit the `package-lock.json` this creates unless the app already
-has one. `npm run dev` works for layout, but the API calls will not, because the dev
+build later. Vite 7 needs Node 20.19+ or 22.12+; an older one warns or fails here, not in the
+sandbox. Do not commit the `package-lock.json` this creates unless the app already has one.
+**The type check is weak until you add `@types/react`.** The scaffold has none and
+`strict: false`, so `tsc` passes on JSX it cannot type at all. Add `@types/react` and
+`@types/react-dom` to `devDependencies`, pinned to React's minor (`19.1.x` for React
+`19.1.2`). `npm run dev` works for layout, but the API calls will not, because the dev
 server does not serve `/api` (see "Local development"). The checklist at the end of this
 file is what to check.
 
@@ -54,6 +63,7 @@ file is what to check.
 
 ```
 studio/{alias}/
+  .gitignore               node_modules, dist, .env*
   package.json             pinned dependencies — never loosen to a ^range
   index.html               entry; loads /src/main.tsx
   vite.config.js           NEVER set `base`; loads the Tailwind plugin
@@ -66,7 +76,7 @@ studio/{alias}/
     lib/datazone.ts        the Datazone client (vendored, editable)
     lib/utils.ts           cn()
     components/app-layout.tsx   header + content shell; providers go here
-    components/ui/         shadcn components — generated, and yours to edit
+    components/ui/         not there yet — `npx shadcn add` creates it; yours to edit
 ```
 
 ## The rules that break apps
@@ -111,7 +121,7 @@ need something it does not cover; `apiFetch` is the escape hatch.
 | `projectId` | The project the app lives in |
 | `branchQuery(filters?)` | `branch=…` plus `[field][$eq]:value` filters |
 | `DatazoneAuthError` | 401 — the session is gone and the app cannot renew it |
-| `DatazoneApiError` | Any other non-2xx, carrying `status` and the API's message |
+| `DatazoneApiError` | Any other non-2xx, carrying `status` and the API's message (see below) |
 
 ```tsx
 import { callEndpoint, executeQuery, getMe } from "@/lib/datazone"
@@ -119,7 +129,7 @@ import { endpointSlug } from "@/lib/resources"   // resolves a slug by name — 
 
 const user = await getMe()
 const rows = await executeQuery<{ region: string; total: number }>(
-  "select region, sum(amount) as total from sales group by region",
+  "select region, sum(amount) as total from sales_a1b2c3 group by region",   // the dataset's alias
 )
 const { records } = await callEndpoint(await endpointSlug("Daily Revenue"), { region: "EU" })
 ```
@@ -129,9 +139,31 @@ and `executeQuery` unwraps it, so use what it returns as an array and do not rea
 off it. Use `executeQueryWithMetadata` when the app needs the column schema, the row count or
 the duration.
 
+**SQL names a dataset by its alias, not its name.** A pipeline output called `sales` becomes a
+dataset named `sales` with the alias `sales_<6 hex>`, and only the alias is a table. `from sales`
+does not fail cleanly: it resolves to whichever dataset in the organisation has the alias
+`sales`, if any, and errors on columns you never wrote. Read the alias from
+`GET /dataset/list` (or the dataset page) after the first run; it differs per deployment.
+
 Permissions are enforced per user on every call, so a read the user is not allowed to make
 throws `DatazoneApiError` — show its message rather than swallowing it. Never build SQL by
 concatenating user input.
+
+**Patch `readError` before showing error messages.** Datazone's errors are
+`{message, detail: {…}, error_class}`, and the scaffold reads only a string `detail`, so
+`DatazoneApiError.message` is the whole JSON body — a 409 shows the user
+`{"message":"Instance with the same primary key already exists.",…}`. Add the `message`
+branch in `src/lib/datazone.ts`:
+
+```ts
+    if (body && typeof body.detail === "string") {
+      return body.detail;
+    }
+    if (body && typeof body.message === "string") {
+      return body.message;
+    }
+    return JSON.stringify(body);
+```
 
 There is no data-fetching library in the scaffold. `useEffect` + `useState` is enough for
 most apps; add one only if asked.
@@ -220,8 +252,10 @@ that matter:
   deployment; look them up by name through the list routes and cache the promise, as in
   the knowledge-object module. **Endpoint slugs are random and differ per branch**, so a
   slug copied from `main` makes a feature-branch app call `main`'s endpoint. Resolve them
-  the same way: `GET /endpoint/list?branch={branch}&filters=[name][$eq]:…` and read
-  `items[0].definition.slug`. Keep the names in one file, `src/lib/resources.ts`, never
+  the same way: `GET /endpoint/list?branch={branch}&filters=[name][$eq]:…&filters=[project.$id][$eq]:{projectId}`
+  and read `items[0].definition.slug`. **Always add the project filter**: the list routes
+  return every project in the organisation, so a bare name lookup can return another
+  project's `Order` or `Daily Revenue`. Keep the names in one file, `src/lib/resources.ts`, never
   scattered across pages.
 - **Filter and page on the server.** Instance lists take `page` and `page_size`. Endpoints
   do not honour them, so give each endpoint `limit_rows` / `offset_rows` filters and page in
@@ -252,13 +286,13 @@ Everything goes through `apiFetch`. Paths are relative to the API root.
 | run SQL on datasets | `POST /dataset/query` (`executeQuery`) |
 | list datasets | `GET /dataset/list?filters=[project.$id][$eq]:{projectId}` |
 | call an endpoint | `GET /endpoint/{slug}?…` (`callEndpoint`) — GET only, returns `{records}` |
-| find an endpoint's slug | `GET /endpoint/list?branch={branch}&filters=[name][$eq]:…` → `items[0].definition.slug` |
-| find a flow / action by name | `GET /flow/list` or `/action/list` with `branchQuery({ name })` — both default to `main` without `branch` |
+| find an endpoint's slug | `GET /endpoint/list?` + `branchQuery({ name, "project.$id": projectId })` → `items[0].definition.slug` |
+| find a flow / action by name | `GET /flow/list` or `/action/list` with `branchQuery({ name, "project.$id": projectId })` — both default to `main` without `branch` |
 | find a view by name | `GET /view/list?filters=[name][$eq]:…&filters=[project.$id][$eq]:{projectId}` — views have no branch |
 | start a flow | `POST /flow/run/{id}?branch={branch}` with `{parameters}` → `{run_id, status}` |
 | poll a flow run | `GET /flow-run/get-by-id/{run_id}` → `status`, `result`, `error_message` |
 | refresh a view | `POST /view/refresh/{id}` → 202; poll `GET /view/get-by-id/{id}` for `status` |
-| find an object by name | `GET /knowledge-object/list?branch={branch}&filters=[name][$eq]:Order` |
+| find an object by name | `GET /knowledge-object/list?` + `branchQuery({ name: "Order", "project.$id": projectId })` |
 | list instances | `GET /knowledge-object/{id}/instances?branch={branch}&page=1&page_size=50` |
 | one instance | `GET /knowledge-object/{id}/instances/{key}?branch={branch}&add_relationships=true` |
 | create / update / delete | `POST` / `PATCH` / `DELETE` `/knowledge-object/{id}/instances[/{key}]?branch={branch}` |
@@ -300,7 +334,8 @@ same push as the app. See `datazone-knowledge-object` for the schema; what matte
   attempt to change a primary key). Show the message; the user can act on all three.
 
 Keep one thin module per object (`src/lib/orders.ts`) holding its id lookup and its calls,
-so `branch` and the paths are written once. Worked example, with the read/write pattern:
+so `branch` and the paths are written once. Ready to copy: `assets/src/lib/orders.ts`, with
+`assets/src/components/order-dialog.tsx` for the form. The patterns behind them:
 `references/api-reference.md`.
 
 ## UI components and styling
@@ -319,8 +354,8 @@ cd studio/<alias>
 npx shadcn@latest add button card table     # writes src/components/ui/
 ```
 
-The scaffold ships `app-layout.tsx` and leaves `src/components/ui/` empty, so the first
-build cannot fail on a component nobody generated. Datazone builds against these twenty:
+The scaffold ships `app-layout.tsx` and no `src/components/ui/` at all, so the first build
+cannot fail on a component nobody generated. Datazone builds against these twenty:
 alert, avatar, badge, button, card, checkbox, dialog, dropdown-menu, input, label, popover,
 progress, select, separator, skeleton, switch, table, tabs, textarea, tooltip. Others in the
 registry work, but these are what the theme is verified against.
@@ -328,9 +363,16 @@ registry work, but these are what the theme is verified against.
 Compose from components rather than hand-writing markup — they carry the theme, focus
 states and keyboard behaviour. Plain Tailwind is right for layout.
 
-Then **check `package.json`**: the CLI writes `^` ranges, so pin them exactly, and Radix
-must appear once as `radix-ui` (`"radix-ui": "1.6.7"`) rather than one package per
-primitive. **Tooltip needs one `<TooltipProvider>`**, in `app-layout.tsx` around
+Then **fix what the CLI wrote**:
+
+- **Every component imports `cn` from `"cn"`**, and `package.json` gains a `cn` package. The
+  build passes and the classes merge wrongly. Point them at `@/lib/utils` and remove it:
+  `sed -i '' 's#from "cn"#from "@/lib/utils"#' src/components/ui/*.tsx && npm uninstall cn`
+  (GNU sed: `sed -i`).
+- **`^` ranges.** Pin each one to the version the CLI installed (`npm ls radix-ui`).
+- **Radix appears once, as `radix-ui`**, never as `@radix-ui/react-*` per primitive.
+
+**Tooltip needs one `<TooltipProvider>`**, in `app-layout.tsx` around
 `{children}`. If a component file already exists, read it before touching it — it may have
 been customised.
 
@@ -384,8 +426,14 @@ same-origin, so you will need to be signed in there).
   re-build after every push you want served.
 - **Statuses**: `NOT_BUILT`, `QUEUED`, `BUILDING`, `READY`, `ERROR`, `TIMEOUT`. Logs and
   errors are on the Builds tab (`GET /studio-app-build/{id}/logs`).
-- **Deleting the app removes its directory** as well as the `config.yml` entry; git history
-  is the only way back.
+- **A bundle over 500 kB warns, and the build still succeeds.** Recharts alone crosses it;
+  the warning is not the failure you are looking for.
+- **Opening an app counts as a session**, and a `STUDIO_APP_SESSION` quota on the
+  organisation, project, user or app answers `429` on the app's `index.html` once reached. That
+  is a quota for an admin to raise, not a build problem. Reopening the same app on the same
+  branch within ten minutes is the same session.
+- **Deleting the app removes its directory** as well as the `config.yml` entry (whatever the
+  CLI's help text says); git history is the only way back.
 - **Cross-organisation access is refused**, not merely hidden: an app is served only to
   users in its own organisation.
 - **The SDK is vendored per app**, so an app scaffolded a while ago carries an older copy. If
@@ -399,8 +447,10 @@ same-origin, so you will need to be signed in there).
 Before pushing, check that:
 
 - every new page has a `<Route>` in `App.tsx`
-- every import resolves to a file that exists, including each `@/components/ui/...`
+- every import resolves to a file that exists, including each `@/components/ui/...`, and no
+  component imports `cn` from `"cn"`
 - every package imported is in `package.json`, pinned exactly
+- every SQL table is a dataset alias, not a dataset name
 - `vite.config.js` still has no `base`
 - every custom colour has both a `:root` value and an `@theme inline` line
 - every knowledge object the app uses is registered under `objects:` in `config.yml`
@@ -428,5 +478,39 @@ Then push, build, and read the Builds tab.
 - `references/api-reference.md` — the SDK surface, and worked knowledge-object, flow and view modules
 - `references/styling.md` — the shadcn setup, the complete theme, and layout samples
 - `references/design.md` — branding through tokens, page anatomy, KPI and chart conventions, states, and visual checks
+
+### Assets — copy into `studio/<alias>/`
+
+Working files, built and served on Datazone 1.8.0 against the real scaffold. Paths mirror the
+app directory. Take only what the job needs; each page also needs its `<Route>`.
+
+- `assets/src/lib/resources.ts` — every endpoint and object name in one place, resolved to a slug or id per branch, once. Start here for any app that calls an endpoint or an object
+- `assets/src/lib/orders.ts` — typed module for one knowledge object: list (paged, filtered), create, update. Copy and rename per object
+- `assets/src/lib/sales.ts` — typed endpoint calls, with paging through `limit_rows` / `offset_rows`
+- `assets/src/lib/use-load.ts` — loading / error / data for one read, dropping stale responses; `reload()` after a write
+- `assets/src/components/states.tsx` — loading rows, error block and empty block, so every page shows its states the same way
+- `assets/src/pages/sales-page.tsx` — dataset rows through an endpoint: filter, paging, loading, empty and error states
+- `assets/src/components/order-dialog.tsx` — a create/edit form in a dialog that writes a knowledge object instance, PATCHing only changed fields and showing 409/400 messages
+- `assets/src/pages/orders-page.tsx` — the instance list that hosts the dialog, with a status filter and re-read after save
+- `assets/src/components/dashboard.tsx` + `assets/src/pages/dashboard-page.tsx` — KPI tiles, a segmented time window and a Recharts bar chart in a `ChartFrame`, per `references/design.md`
+- `assets/src/components/app-nav.tsx` + `assets/src/App.tsx` — header navigation and the route table for the three pages
+
+They need, beyond the scaffold:
+
+```bash
+npx shadcn@latest add badge button dialog input label select table   # then fix the cn imports, pin
+npm install -E recharts@3.10.1 react-is@<the scaffold's react version>   # dashboard only
+npm install -D -E @types/react@19.1.17 @types/react-dom@19.1.11
+```
+
+and the `readError` patch above, or the dialog shows raw JSON on a 409.
+
+### Examples — the project files behind the assets
+
+- `examples/config.yml` — the `objects:`, `pipelines:`, `endpoints:` and `studio_apps:` entries to merge into the project's `config.yml`
+- `examples/objects/order.yml` — the `Order` object `orders.ts` and the dialog write to
+- `examples/endpoints/sales-rows.yml` — paged, filtered rows with `count() OVER ()` as the total, for the rows page
+- `examples/endpoints/sales-by-day.yml` — daily aggregates for the dashboard
+- `examples/pipelines/demo_sales.py` — 90 days of made-up sales so the endpoints have data; skip it when the project has its own. Both endpoints read it as `sales_a1b2c3`: replace that with the alias the first run creates
 
 Official docs: https://docs.datazone.co/reference/studio-apps/overview

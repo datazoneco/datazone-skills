@@ -1,0 +1,15 @@
+# The entries the assets need, added to the project's own config.yml (project_name and
+# project_id stay as they are). The studio_apps entry is written for you by "New studio app".
+studio_apps:
+  - alias: sales_app
+    name: Sales App
+    path: studio/sales_app
+objects:
+  - path: objects/order.yml
+pipelines:
+  - alias: demo_sales
+    path: pipelines/demo_sales.py
+    name: Demo Sales
+endpoints:
+  - path: endpoints/sales-rows.yml
+  - path: endpoints/sales-by-day.yml

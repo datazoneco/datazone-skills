@@ -171,6 +171,31 @@ GET /organisation/audit-logs-metrics?from_date=...&status=...&method=...&user=..
 For "who changed permissions": `url=/(policy|role)/` with `method=POST` (and `PUT`,
 `DELETE`). For "who deleted X": `method=DELETE`.
 
+## Export logs
+
+The audit log skips reads, but every **export** of a query result is logged separately:
+dataset and chart exports from intelligent apps, the SQL explorer and dataset previews.
+Needs `organisation:manage`.
+
+```
+GET /export-log/list?sort_by=-created_at&page_size=50
+    &filters=[user.$id][$eq]:<user_id>          # optional, usual filter syntax
+```
+
+Items: `user` and `project` (links; add `fetch_links=true` to resolve them),
+`entity_type`, `entity_id`, `entity_name` (what the export was made from, e.g. an
+intelligent app; all `null` for an ad hoc query), `query`, `method` (`FILE`),
+`file_name`, `file_type` (`CSV`, `EXCEL`, `PARQUET`), `row_count`, `file_path` (where the
+prepared file is stored, when it was built in the background) and `created_at`.
+
+```json
+{"method": "FILE", "query": "SELECT * FROM category_summary_df_52c3a4",
+ "file_name": "e2e.csv", "file_type": "CSV", "row_count": 12,
+ "entity_type": null, "created_at": "2026-11-16T18:21:22Z"}
+```
+
+An export is logged when its file is ready, so failed exports are not logged.
+
 ## Orion and app question logs
 
 ```

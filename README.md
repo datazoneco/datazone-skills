@@ -36,11 +36,11 @@ cp -r datazone-skills/skills/datazone-intelligent-app ~/.claude/skills/
 | `datazone-pipeline` | Writing `@transform` pipelines — inputs, outputs, materialization, the DAG |
 | `datazone-intelligent-app` | Building and debugging Intelligent App dashboards — charts, filters, tabs, widgets |
 | `datazone-endpoint` | Exposing a query, action, or vector search as a REST API |
-| `datazone-flow` | Declarative YAML orchestration — LLM, REST, action, and Python nodes |
+| `datazone-flow` | Declarative YAML orchestration — LLM, decision, SQL, REST, action, pipeline/extract run, and Python nodes |
 | `datazone-knowledge-object` | Versioned business entities — fields, primary keys, relationships, actions |
 | `datazone-api` | Calling the Datazone REST API — auth, filters, sorting, pagination, links |
-| `datazone-settings` | Organisation admin — users, invites, roles, policies, API keys, audit logs, quotas, usage analytics ("token usage last month") |
-| `datazone-studio-app` | Building Vite + React studio apps — the SDK, knowledge object CRUD, components, styling, dashboard design |
+| `datazone-settings` | Organisation admin — users, invites, roles and project roles, policies, API keys, notification channels, audit and export logs, quotas, usage analytics ("token usage last month") |
+| `datazone-studio-app` | Building Vite + React studio apps — the SDK, knowledge object CRUD, components, styling, dashboard design, ready-to-copy pages |
 
 More on the way: extracts.
 
@@ -70,7 +70,8 @@ Agent-readable index: [docs.datazone.co/llms.txt](https://docs.datazone.co/llms.
 ## Contributing
 
 Skills live in `skills/<skill-name>/` with a `SKILL.md`, an optional `references/`
-folder for detail the agent loads on demand, and `examples/` for working files.
+folder for detail the agent loads on demand, `examples/` for working project files, and
+`assets/` for files to copy into a project as they are.
 
 Examples are validated against Datazone's own Pydantic models — if you add one, make
 sure it deploys.

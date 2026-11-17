@@ -1,0 +1,19 @@
+# FROM names the dataset by its alias, not its name: a pipeline output named `sales` gets
+# `sales_<6 hex>`. Replace sales_a1b2c3 with the alias from GET /dataset/list after the first run.
+endpoint:
+  name: Sales Rows
+  type: query
+  config:
+    query: |
+      SELECT order_no, day, region, category, amount, count() OVER () AS total_rows
+      FROM sales_a1b2c3
+      {% if region %}WHERE region = '{{ region | replace("\\", "\\\\") | replace("'", "\\'") }}'{% endif %}
+      ORDER BY day DESC, order_no DESC
+      LIMIT {{ (limit_rows or 50) | int }} OFFSET {{ (offset_rows or 0) | int }}
+    filters:
+      - name: region
+        type: string
+      - name: limit_rows
+        type: integer
+      - name: offset_rows
+        type: integer

@@ -27,6 +27,8 @@ app:
 | `llm_model` | enum | – | Specific LLM model |
 | `llm_instruction` | string | – | Custom assistant prompt |
 | `insight_agent_instruction` | string | – | Custom insights prompt |
+| `llm_self_learner` | bool | `false` | Let editors teach the assistant rules that apply to every user of the app |
+| `agent_runnable_actions` | list of action ids | `[]` | Actions the app's assistant may run. See "Letting the assistant run actions" in SKILL.md |
 | `default_tab` | string | – | Tab name to open on load |
 | `style` | object | – | See below |
 

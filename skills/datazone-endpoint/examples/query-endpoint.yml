@@ -1,0 +1,63 @@
+# Query endpoint: quoted and escaped strings, a comma-separated list, numbers through
+# `| float` / `| int`, optional clauses behind `{% if %}`, and paging inside the SQL.
+#
+# Reads a materialized dataset with columns
+#   order_id (int), order_date (date), region (str), customer_name (str), amount (float).
+# `orders_7d8caa` is that dataset's alias, which is its table name. Replace it with yours:
+# a pipeline output named `orders` gets an alias like `orders_<6 hex>`, and a bare `orders`
+# can resolve to another table you can read.
+#
+# config.yml:
+#   endpoints:
+#     - path: endpoints/orders-by-region.yml
+#
+# Call (look the slug up first, see references/api-reference.md):
+#   curl -G -H "x-api-key: $DATAZONE_API_KEY" \
+#     "https://<your-host>/api/v1/endpoint/orders-by-region-f9f216b7" \
+#     --data-urlencode region=EU \
+#     --data-urlencode "customers=O'Brien Ltd,Acme GmbH" \
+#     --data-urlencode limit_rows=2 --data-urlencode offset_rows=1
+#
+# Response (200):
+#   {"records": [
+#     {"order_id": 2, "order_date": "2026-10-01", "region": "EU",
+#      "customer_name": "O'Brien Ltd", "amount": 80.5},
+#     {"order_id": 6, "order_date": "2026-10-03", "region": "EU",
+#      "customer_name": "Acme GmbH", "amount": 60.0}]}
+#
+# What the other inputs do:
+#   min_amount=abc          -> `| float` renders 0.0, so the clause keeps every row
+#   region=EU' OR '1'='1    -> escaped, compared as one string: {"records": []}
+#   region omitted, or XX   -> {"records": []}; `optional: false` and `possible_values`
+#                              are not enforced at call time
+#   foo=1                   -> 400 "Filter 'foo' not found in endpoint definition."
+endpoint:
+  name: Orders By Region
+  type: query
+  config:
+    query: |
+      SELECT order_id, order_date, region, customer_name, amount
+      FROM orders_7d8caa
+      WHERE region = '{{ region | replace("\\", "\\\\") | replace("'", "\\'") }}'
+      {% if customers %}
+        AND has(splitByChar(',', '{{ customers | replace("\\", "\\\\") | replace("'", "\\'") }}'), customer_name)
+      {% endif %}
+      {% if min_amount %}AND amount >= {{ min_amount | float }}{% endif %}
+      {% if since %}AND order_date >= toDate('{{ since | replace("\\", "\\\\") | replace("'", "\\'") }}'){% endif %}
+      ORDER BY order_date, order_id
+      LIMIT {{ (limit_rows or 50) | int }} OFFSET {{ (offset_rows or 0) | int }}
+    filters:
+      - name: region
+        type: enum
+        optional: false
+        possible_values: [EU, US, APAC]
+      - name: customers
+        type: string
+      - name: min_amount
+        type: float
+      - name: since
+        type: date
+      - name: limit_rows
+        type: integer
+      - name: offset_rows
+        type: integer
