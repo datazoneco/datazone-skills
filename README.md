@@ -40,6 +40,7 @@ cp -r datazone-skills/skills/datazone-intelligent-app ~/.claude/skills/
 | `datazone-knowledge-object` | Versioned business entities — fields, primary keys, relationships, actions |
 | `datazone-api` | Calling the Datazone REST API — auth, filters, sorting, pagination, links |
 | `datazone-settings` | Organisation admin — users, invites, roles and project roles, policies, API keys, notification channels, audit and export logs, quotas, usage analytics ("token usage last month") |
+| `datazone-container` | Long-running services from a Dockerfile or image — `config.yml`, access levels, deploys, `ContainerAPI`, filling Empty Vectors with the `Vector` SDK |
 | `datazone-studio-app` | Building Vite + React studio apps — the SDK, knowledge object CRUD, components, styling, dashboard design, ready-to-copy pages |
 
 More on the way: extracts.
