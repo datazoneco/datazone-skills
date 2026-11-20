@@ -71,7 +71,7 @@ containers you are not using: **Stop**, or `POST /container/stop/{id}?branch=<br
 | `access` | Who | How |
 |---|---|---|
 | `internal` | Actions and pipelines of the same project only | `ContainerAPI` |
-| `authenticated` | Org members with read permission on the container | Browser session, or `x-api-key` header |
+| `authenticated` | Org members with read permission on the container | `x-api-key` header only — a browser session is not accepted |
 | `public` | Anyone with the URL | Plain HTTP |
 
 An `internal` container answers 404 at its URL — that is expected, not a bug.
@@ -182,7 +182,7 @@ or `{"breed": ["husky", "akita"]}`.
 | 502 "Container is not reachable." | Listening on `127.0.0.1` or another port, or the request took over 300 s |
 | 404 at the URL | `access: internal`, or the branch slug in the URL is wrong |
 | 503 at the URL | Container is not `RUNNING` on that branch |
-| 401 at the URL | `authenticated` container called without a session or `x-api-key` |
+| 401 at the URL | `authenticated` container called without `x-api-key` (opening it in a browser always gives 401) |
 | Page loads without styles or scripts | Absolute asset URLs; see "relative URLs" above |
 
 ## Related
