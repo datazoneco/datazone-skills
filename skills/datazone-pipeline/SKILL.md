@@ -1,6 +1,6 @@
 ---
 name: datazone-pipeline
-description: Use when writing, editing, or debugging a Datazone pipeline — Python files with @transform functions that read Datasets and produce Datasets. Triggers on "datazone pipeline", "@transform", "input_mapping", "output_mapping", "materialized", "run_upstream", a pipeline that depends on another pipeline (`depends:` in config.yml), editing a file registered under `pipelines:` in config.yml, a Spark profile or insight (SPILL, DATA_SKEW, EXECUTOR_OUT_OF_MEMORY), or a pipeline that fails to deploy or run.
+description: Use when writing, editing, or debugging a Datazone pipeline — Python files with @transform functions that read Datasets and produce Datasets. Triggers on "datazone pipeline", "@transform", "input_mapping", "output_mapping", "materialized", "run_upstream", a pipeline that depends on another pipeline (`depends:` in config.yml), editing a file registered under `pipelines:` in config.yml, `ContainerAPI` or `Vector` in a transform, a Spark profile or insight (SPILL, DATA_SKEW, EXECUTOR_OUT_OF_MEMORY), or a pipeline that fails to deploy or run.
 ---
 
 # Writing Datazone pipelines
@@ -66,7 +66,7 @@ def aggregate_sales(orders_df):
 ```
 
 Import from `datazone`: `transform`, `Input`, `Output`, `Dataset`, `Variable`, `logger`
-(and `Agent` for LLM calls). **`OutputMode` is not importable at run time** — the deploy
+(and `Agent` for LLM calls, `ContainerAPI` and `Vector` — see below). **`OutputMode` is not importable at run time** — the deploy
 passes, then the run fails with `cannot import name 'OutputMode' from 'datazone'`.
 Write `mode="append"` as a string.
 
@@ -201,6 +201,32 @@ region = str(Variable("sales_region"))
 attribute 'get_value'`. The project's variable wins over an organisation one with the
 same key.
 
+## Containers and Empty Vectors
+
+`ContainerAPI` calls a container of the project by alias (see `datazone-container`);
+`Vector` writes to and searches an **Empty Vector** — one created in the UI with only a
+name, dimension and metric, filled with embeddings your code makes:
+
+```python
+from datazone import ContainerAPI, Dataset, Input, Vector, transform
+
+@transform(input_mapping={"images": Input(Dataset(alias="dog_images"))}, engine="pandas")
+def index_dog_images(images):
+    embedder = ContainerAPI("clip-embedder")          # branch="main" unless you pass one
+    index = Vector("dog-images")
+    for row in images.itertuples():
+        embedding = embedder.post("/embed/image", json={"path": row.path}).json()["embedding"]
+        index.upsert([{"id": row.path, "vector": embedding, "payload": {"breed": row.breed}}])
+    return images
+```
+
+- `upsert` replaces points whose `id` exists, so reruns are safe. Each vector must have
+  the Empty Vector's dimension, or the call raises.
+- `Vector` also has `search(vector, limit, score_threshold, filter)`, `get(ids)`,
+  `delete(ids, filter)`, `count(filter)` and `clear()`. It works on Empty Vectors only.
+- `ContainerAPI` raises `Container '<alias>' on branch '<branch>' cannot be called: ...`
+  when the container is missing or not `RUNNING`; deploy it first.
+
 ## Pipelines as upstreams
 
 List other pipelines' aliases under `depends` and they run **in full** before this one,
@@ -309,5 +335,6 @@ For failed runs, execution logs, upstream runs and the Spark profile, see
 
 - `datazone-project-setup` — cloning, profiles, the deploy loop
 - `datazone-intelligent-app` — visualising the datasets a pipeline produces
+- `datazone-container` — the containers a transform calls with `ContainerAPI`
 
 Official docs: https://docs.datazone.co

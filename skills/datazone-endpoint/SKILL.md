@@ -180,6 +180,10 @@ endpoint:
 The vector must exist and be `INDEXED`. Vectors are not declared in the repository:
 create one in the UI or with `POST /vector/create`, and take its id from `GET /vector/list`.
 
+**An Empty Vector (`external: true`) can't back a vector endpoint**: it holds raw
+embeddings with no text to embed a `query` against, so the call fails with 400. Search it in
+an action with `Vector("<name>").search(vector=...)` and expose an **action** endpoint.
+
 - **The call takes exactly `query` (required), `limit` (default 10) and
   `score_threshold`.** Anything else is ignored silently, without a 400.
 - **`filters` under a vector config do nothing.** They deploy, but are neither applied nor
