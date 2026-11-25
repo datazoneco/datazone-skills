@@ -1,13 +1,13 @@
 ---
 name: datazone-container
-description: Use when adding, deploying or debugging a Datazone Container — a long-running service built from a Dockerfile in the project repository or run from a public image, declared under `containers:` in config.yml. Triggers on "datazone container", "deploy a model server / API / web tool on Datazone", `ContainerAPI`, the `/container-proxy/` URL, a container stuck in DEPLOYING, ending in ERROR or TIMEOUT, answering 401/404/502, or filling an Empty Vector with embeddings from your own model.
+description: Use when adding, deploying or debugging a Datazone Container — a long-running service built from a Dockerfile in the project repository or run from a public image, declared under `containers:` in config.yml. Triggers on "datazone container", "deploy a model server / API / web tool on Datazone", `Container(...).get_client()`, the `/container-proxy/` URL, a container stuck in DEPLOYING, ending in ERROR or TIMEOUT, answering 401/404/502, or filling an Empty Vector with embeddings from your own model.
 ---
 
 # Datazone Containers
 
 A container is a long-running HTTP service that Datazone builds and runs for a project:
 a model server, an internal API, a small web tool. Actions and pipelines call it with
-`ContainerAPI`; `authenticated` and `public` containers also get a URL.
+`Container("<alias>").get_client()`; `authenticated` and `public` containers also get a URL.
 
 Most of the rules below exist because breaking them gives a container that **deploys and
 then fails**: a crash loop, a 502, or a web page with no styles.
@@ -18,7 +18,7 @@ then fails**: a crash loop, a 502, or a web page with no styles.
 2. `git add`, `git commit`, `git push` — this **registers** the container on the branch; it does not deploy it
 3. Deploy — **Deploy** on the project's **Containers** page, or `POST /container/deploy/{id}?branch=<branch>`
 4. Wait for `RUNNING` — `GET /container/get-by-id/{id}?branch=<branch>`, read `definition.status` and `definition.error_message`
-5. Call it — `ContainerAPI("<alias>")` from code, or the URL on its Overview tab
+5. Call it — `Container("<alias>").get_client()` from code, or the URL on its Overview tab
 
 Every later change (code, `config.yml` entry, environment variables) needs another deploy.
 One deployment runs per branch (a second deploy while one is in progress is a 409), and by
@@ -70,12 +70,12 @@ containers you are not using: **Stop**, or `POST /container/stop/{id}?branch=<br
 
 | `access` | Who | How |
 |---|---|---|
-| `internal` | Actions and pipelines of the same project only | `ContainerAPI` |
+| `internal` | Actions and pipelines of the same project only | `Container` |
 | `authenticated` | Org members with read permission on the container | `x-api-key` header only — a browser session is not accepted |
 | `public` | Anyone with the URL | Plain HTTP |
 
 An `internal` container answers 404 at its URL — that is expected, not a bug.
-`ContainerAPI` reaches every access level.
+`Container` reaches every access level.
 
 ## The rules that break containers
 
@@ -123,21 +123,21 @@ back keeps the stored value. Changes apply on the next deploy.
 ## Calling it from code
 
 ```python
-from datazone.actions import action, ContainerAPI   # in a pipeline: from datazone import ContainerAPI
+from datazone.actions import action, Container   # in a pipeline: from datazone import Container
 
 @action
 def embed(text: str):
-    response = ContainerAPI("clip-embedder").post("/embed/text", json={"texts": [text]})
+    response = Container("clip-embedder").get_client().post("/embed/text", json={"texts": [text]})
     response.raise_for_status()
     return response.json()["embeddings"][0]
 ```
 
-`ContainerAPI(alias, branch="main", timeout=300)` has `get`, `post`, `put`, `patch`,
+`Container(alias, branch="main").get_client(timeout=300)` returns a client with `get`, `post`, `put`, `patch`,
 `delete` and `request(method, path)`, taking `requests` keyword arguments and returning a
 `requests.Response`. **`branch` defaults to `main`**, not the branch the code runs on:
 pass it explicitly when testing a container deployed on a feature branch.
 
-If the container is missing or not running on that branch, the constructor raises
+If the container is missing or not running on that branch, `get_client()` raises
 `Container '<alias>' on branch '<branch>' cannot be called: <reason>`.
 
 ## Filling an Empty Vector
@@ -147,16 +147,16 @@ the embeddings to an **Empty Vector** (created in the UI with a name, dimension 
 metric) with the `Vector` SDK:
 
 ```python
-from datazone.actions import action, ContainerAPI, Vector
+from datazone.actions import action, Container, Vector
 
 @action
 def index_image(path: str):
-    embedding = ContainerAPI("clip-embedder").post("/embed/image", json={"path": path}).json()["embedding"]
+    embedding = Container("clip-embedder").get_client().post("/embed/image", json={"path": path}).json()["embedding"]
     Vector("dog-images").upsert([{"id": path, "vector": embedding, "payload": {"path": path}}])
 
 @action
 def search_images(query: str):
-    embedding = ContainerAPI("clip-embedder").post("/embed/text", json={"texts": [query]}).json()["embeddings"][0]
+    embedding = Container("clip-embedder").get_client().post("/embed/text", json={"texts": [query]}).json()["embeddings"][0]
     return Vector("dog-images").search(vector=embedding, limit=5)
 ```
 
